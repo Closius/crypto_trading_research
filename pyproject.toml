@@ -1,0 +1,15 @@
+# Example configuration for Black.
+
+[tool.black]
+line-length = 120
+#target-version = ['py310']
+include = '\.pyi?$'
+
+[project]
+name = "black"
+description = "The uncompromising code formatter."
+license = { text = "MIT" }
+requires-python = ">=3.10"
+authors = [
+  { name = "Anton Kavalerov", email = "ant.kavalerov@gmail.com" },
+]
