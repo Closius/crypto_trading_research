@@ -287,7 +287,7 @@ def ohlcv(stock_names, timeframe, limit, stop_event, logging_queue):
 
 def main():
     logger_listener = mp_logging.LoggerListener()
-    logging_queue = logger_listener.start_listener_process(log_file_path="arbitrage.log")
+    logging_queue = logger_listener.start_listener_process(log_file_path="arbitrage_stocks.log")
     logger = mp_logging.LoggerWorker().getLogger(__name__)
     logger.info("start")
 
