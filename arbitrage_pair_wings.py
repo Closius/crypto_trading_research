@@ -12,14 +12,10 @@ import json5
 import multiprocessing as mp
 from multiprocessing.sharedctypes import Array
 
-import matplotlib as mpl
-
-# mpl.rcParams["lines.linewidth"] = 1
-
 import mp_logging
 
 
-def visualize_line_by_line(data_dict, file_name):
+def visualize_line_by_line(data_dict, file_name, highlite_zero_x=False):
     """
     data_dict: {pair: df}
     """
@@ -38,8 +34,10 @@ def visualize_line_by_line(data_dict, file_name):
         ax.set_xticklabels([])
         ax.tick_params(left=False, bottom=False)
 
-        ax.set_xticks(np.arange(0, data_dict[pair].size, 1))
+        ax.set_xticks(np.arange(0, data_dict[pair].size, 50))
         ax.set_title(pair)
+        if highlite_zero_x:
+            ax.axhline(0, color="black", linewidth=2)
 
         data_dict[pair].plot(kind="line", ax=ax, grid=True)
 
@@ -139,7 +137,7 @@ def ohlcv(stock_names, pairs, timeframe, limit, stop_event, logging_queue):
     for pair in pairs:
         p_data[pair] = get_ohlcv(pair)
 
-    visualize_line_by_line(p_data, f"arbitrage_price_{timeframe}_{limit}.pdf")
+    visualize_line_by_line(p_data, f"arbitrage_all_price_{timeframe}_{limit}.pdf")
 
     p_data_dif = {}
     for pair in pairs:
@@ -150,52 +148,93 @@ def ohlcv(stock_names, pairs, timeframe, limit, stop_event, logging_queue):
 
         p_data_dif[pair] = df
 
-    visualize_line_by_line(p_data_dif, f"arbitrage_dif_{timeframe}_{limit}.pdf")
+    visualize_line_by_line(p_data_dif, f"arbitrage_all_diff_{timeframe}_{limit}.pdf", highlite_zero_x=True)
 
     return p_data
 
 
-def number_of_intersections(price1: pd.Series, price2: pd.Series):
-    df_diff = price2 - price1
+def find_best_stocks_pair(stock_names, pairs, timeframe, limit, p_data):
+    """
+    Investigate which pair of stocks give better arbitrage
+    """
 
-    def number_of_netavive_to_positive_switches(df: np.array):
-        price_1 = df[0]
-        price_2 = df[-1]
-        if (price_1 < 0 and price_2 > 0) or (price_1 > 0 and price_2 < 0):
-            return 1
-        return 0
+    def number_of_intersections(price1: pd.Series, price2: pd.Series):
+        df_diff = price2 - price1
 
-    noi = int(df_diff.rolling(window=2).apply(number_of_netavive_to_positive_switches, raw=True).sum())
+        def number_of_netavive_to_positive_switches(df: np.array):
+            price_1 = df[0]
+            price_2 = df[-1]
+            if (price_1 < 0 and price_2 > 0) or (price_1 > 0 and price_2 < 0):
+                return 1
+            return 0
 
-    def less_0(df: np.array):
-        price_1 = df[0]
-        price_2 = df[-1]
-        if price_1 < 0 and price_2 < 0:
-            return 1
-        return 0
+        noi = int(df_diff.rolling(window=2).apply(number_of_netavive_to_positive_switches, raw=True).sum())
 
-    less_zero = int(df_diff.rolling(window=2).apply(less_0, raw=True).sum())
+        def less_0(df: np.array):
+            price_1 = df[0]
+            price_2 = df[-1]
+            if price_1 < 0 and price_2 < 0:
+                return 1
+            return 0
 
-    def more_0(df: np.array):
-        price_1 = df[0]
-        price_2 = df[-1]
-        if price_1 > 0 and price_2 > 0:
-            return 1
-        return 0
+        less_zero = int(df_diff.rolling(window=2).apply(less_0, raw=True).sum())
 
-    more_zero = int(df_diff.rolling(window=2).apply(more_0, raw=True).sum())
+        def more_0(df: np.array):
+            price_1 = df[0]
+            price_2 = df[-1]
+            if price_1 > 0 and price_2 > 0:
+                return 1
+            return 0
 
-    common_nonsero = df_diff.isnull().sum() / noi
+        more_zero = int(df_diff.rolling(window=2).apply(more_0, raw=True).sum())
 
-    dur_up = 2 - (common_nonsero / more_zero)
-    dur_down = 2 - (common_nonsero / less_zero)
+        common_nonzero = df_diff.notna().sum()
 
-    dur_up = round(float(dur_up), 2)
-    dur_down = round(float(dur_down), 2)
+        dur_up = 2 - (common_nonzero / more_zero)
+        dur_down = 2 - (common_nonzero / less_zero)
 
-    score = (abs(dur_up) + abs(dur_down)) / 2
+        dur_up = round(float(dur_up), 2)
+        dur_down = round(float(dur_down), 2)
 
-    return noi, dur_up, dur_down, score
+        score = round((abs(dur_up) + abs(dur_down)) / 2, 2)
+
+        return {
+            "noi": noi,
+            "score": score,
+            "common_nonzero": int(common_nonzero),
+            "more_zero": int(more_zero),
+            "less_zero": int(less_zero),
+        }
+
+    logger = mp_logging.LoggerWorker().getLogger(__name__)
+    rank_by_stocks = {}  # pair: {(stock_name_1, stock_name_2): rank}
+    for pair in pairs:
+        logger.info(pair)
+        rank_by_stocks[pair] = []
+        for sn1, sn2 in itertools.combinations(stock_names, 2):
+            # if p_data[pair][sn1 + "_CLOSE"].isnull().sum() != p_data[pair][sn2 + "_CLOSE"].isnull().sum():
+            #     continue
+            params = number_of_intersections(p_data[pair][sn1 + "_CLOSE"], p_data[pair][sn2 + "_CLOSE"])
+            rank_by_stocks[pair].append((sn1, sn2, params))
+        rank_by_stocks[pair].sort(key=lambda x: x[2]["score"], reverse=False)
+        for sns_noi in rank_by_stocks[pair]:
+            logger.info(f"\t{sns_noi}")
+
+    # show first pair
+    pair = pairs[0]
+    two_stocks_df = {}
+    for sn1, sn2, params in rank_by_stocks[pair]:
+        # two_stocks_df[sn1 + " " + sn2 + " " + str(params)] = pd.concat(
+        #     [p_data[pair][sn1 + "_CLOSE"], p_data[pair][sn2 + "_CLOSE"]], axis=1
+        # )
+        two_stocks_df[sn2 + " - " + sn1 + " " + str(params)] = (
+            p_data[pair][sn2 + "_CLOSE"] - p_data[pair][sn1 + "_CLOSE"]
+        )
+    visualize_line_by_line(
+        two_stocks_df,
+        f"arbitrage_two_stocks_diff_{pair.replace('/','_')}_{timeframe}_{limit}.pdf",
+        highlite_zero_x=True,
+    )
 
 
 def main():
@@ -207,9 +246,9 @@ def main():
     stop_event = mp.Event()
 
     timeframe = "1m"
-    limit = 60
+    limit = 120
 
-    stock_names = {"binance", "bybit"}  # , "htx", "mexc", "okx", "kucoin"}
+    stock_names = {"binance", "bybit", "htx", "mexc", "kucoin"}  # "okx"
 
     pairs = [
         "GMX/USDT",  # ]
@@ -236,7 +275,6 @@ def main():
         "BTC/USDT",
     ]
 
-    # prices(stock_names, stop_event, logging_queue)
     p_data = ohlcv(
         stock_names=stock_names,
         pairs=pairs,
@@ -246,30 +284,7 @@ def main():
         logging_queue=logging_queue,
     )
 
-    rank_by_stocks = {}  # pair: {(stock_name_1, stock_name_2): rank}
-    for pair in pairs:
-        logger.info(pair)
-        rank_by_stocks[pair] = []
-        for sn1, sn2 in itertools.combinations(stock_names, 2):
-            # if p_data[pair][sn1 + "_CLOSE"].isnull().sum() != p_data[pair][sn2 + "_CLOSE"].isnull().sum():
-            #     continue
-            noi, dur_up, dur_down, score = number_of_intersections(
-                p_data[pair][sn1 + "_CLOSE"], p_data[pair][sn2 + "_CLOSE"]
-            )
-            rank_by_stocks[pair].append((sn1, sn2, noi, dur_up, dur_down, score))
-        rank_by_stocks[pair].sort(key=lambda x: x[5], reverse=False)
-        for sns_noi in rank_by_stocks[pair]:
-            logger.info(f"\t{sns_noi}")
-
-    # show first pair
-    pair = pairs[0]
-    two_stocks_df = {}
-    for sn1, sn2, *opt in rank_by_stocks[pair]:
-        two_stocks_df[sn1 + " " + sn2 + " " + str(opt)] = pd.concat(
-            [p_data[pair][sn1 + "_CLOSE"], p_data[pair][sn2 + "_CLOSE"]], axis=1
-        )
-
-    visualize_line_by_line(two_stocks_df, f"arbitrage_two_stocks_{pair.replace('/','_')}_{timeframe}_{limit}.pdf")
+    find_best_stocks_pair(stock_names, pairs, timeframe, limit, p_data)
 
     stop_event.set()
     logger_listener.stop_listener_process()
