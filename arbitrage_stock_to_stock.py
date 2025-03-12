@@ -1,5 +1,5 @@
 """
-arbitrage between stocks. distributed deposit
+arbitrage between stocks
 """
 
 import os
@@ -286,89 +286,96 @@ def get_pairs_list(stock_names):
     return pairs_USDT_everywhere
 
 
-def calc_price_diff_percent(p_data, base_A_stock, stock_B):
-    logger = mp_logging.LoggerWorker().getLogger(__name__)
-    p_data_dif_percent = {}
-    pairs = list(p_data.keys())
-    for i, pair in enumerate(pairs):
-        df_percent = pd.DataFrame()
-        base_column = f"{base_A_stock}_CLOSE"
-        for column in p_data[pair].columns.tolist():
-            if column.startswith(base_A_stock) or column.startswith(stock_B):
-                try:
-                    if "VOLUME" not in column:
-                        df_percent[column] = (
-                            (p_data[pair][column] - p_data[pair][base_column]) / p_data[pair][column]
-                        ) * 100
-                    else:
-                        df_percent[column] = p_data[pair][column]
-                except Exception as err:
-                    logger.error(f"calc_price_diff_percent: {base_A_stock}, {stock_B}, {pair}, err: {err}")
-                    continue
-
-        p_data_dif_percent[pair] = df_percent
-    return p_data_dif_percent
-
-
-def calc_arbitrage(stock_name_A_base, stock_name_B, p_data, start_USDT_amount):
-    def for_one_moment(df: pd.Series):
-        """
-        start_USDT_amount: amount for trading. EACH TRADE the same amount!
-
-        return: sorted by non zero profit
-        """
-
-        try:
-            price_A_base = df[f"{stock_name_A_base}_CLOSE"]
-            volume_A_base = df[f"{stock_name_A_base}_VOLUME"]
-            price_B = df[f"{stock_name_B}_CLOSE"]
-            volume_B = df[f"{stock_name_B}_VOLUME"]
-        except:
-            return 0
-
-        def check_volume(ac):
-            treshold = 10 * ac  # do arbitrage only if the volume is big enough on stocks
-            if treshold < volume_B and treshold < volume_A_base:
-                return True
-            else:
-                return False
-
-        diff = (price_A_base - price_B) / price_A_base
-        if diff > 0:
-            # cheap is B
-            amount_coins = start_USDT_amount / price_B
-            profit = (amount_coins * price_A_base) - start_USDT_amount
-        elif diff < 0:
-            # cheap is A
-            amount_coins = start_USDT_amount / price_A_base
-            profit = (amount_coins * price_B) - start_USDT_amount
-        else:
-            amount_coins = 0
-            profit = 0
-
-        # check if enough volume on stocks
-        if not check_volume(amount_coins):
-            profit = 0
-        return profit
-
-    pairs = list(p_data.keys())
-    p_data_profit = {}
-    pair_non_zero_profits = []
-    for pair in pairs:
-        p_data_profit[pair] = p_data[pair].apply(for_one_moment, axis=1)
-        score = p_data_profit[pair].astype(bool).sum()
-        pair_non_zero_profits.append((pair, score))
-    pair_non_zero_profits.sort(key=lambda x: x[1], reverse=True)
-
-    # sort by total profit
-    p_data_profit_out = {}
-    for pair, _ in pair_non_zero_profits:
-        p_data_profit_out[pair] = p_data_profit[pair]
-
-    return p_data_profit_out, pair_non_zero_profits
-
-
 def calc_best_stock_exchange_pairs(stock_combs, p_data, timeframe, limit, dir_results_name, plot=True):
+    """
+    Calculate (and plot) the best stock exchange pairs to use for arbitrage
+    Plot charts for all pairs of `p_data`:
+        - Prices from two stocks
+        - Prices difference in % (stock A - stock B)
+        - Profit from arbitrage based on 100 USDT trade each time. Fees are not included. Volume is taken into account
+        - Volumes from two stocks
+    """
+
+    def calc_price_diff_percent(p_data, base_A_stock, stock_B):
+        logger = mp_logging.LoggerWorker().getLogger(__name__)
+        p_data_dif_percent = {}
+        pairs = list(p_data.keys())
+        for i, pair in enumerate(pairs):
+            df_percent = pd.DataFrame()
+            base_column = f"{base_A_stock}_CLOSE"
+            for column in p_data[pair].columns.tolist():
+                if column.startswith(base_A_stock) or column.startswith(stock_B):
+                    try:
+                        if "VOLUME" not in column:
+                            df_percent[column] = (
+                                (p_data[pair][column] - p_data[pair][base_column]) / p_data[pair][column]
+                            ) * 100
+                        else:
+                            df_percent[column] = p_data[pair][column]
+                    except Exception as err:
+                        logger.error(f"calc_price_diff_percent: {base_A_stock}, {stock_B}, {pair}, err: {err}")
+                        continue
+
+            p_data_dif_percent[pair] = df_percent
+        return p_data_dif_percent
+
+    def calc_arbitrage(stock_name_A_base, stock_name_B, p_data, start_USDT_amount):
+        def for_one_moment(df: pd.Series):
+            """
+            start_USDT_amount: amount for trading. EACH TRADE the same amount!
+
+            return: sorted by non zero profit
+            """
+
+            try:
+                price_A_base = df[f"{stock_name_A_base}_CLOSE"]
+                volume_A_base = df[f"{stock_name_A_base}_VOLUME"]
+                price_B = df[f"{stock_name_B}_CLOSE"]
+                volume_B = df[f"{stock_name_B}_VOLUME"]
+            except:
+                return 0
+
+            def check_volume(ac):
+                treshold = 10 * ac  # do arbitrage only if the volume is big enough on stocks
+                if treshold < volume_B and treshold < volume_A_base:
+                    return True
+                else:
+                    return False
+
+            diff = (price_A_base - price_B) / price_A_base
+            if diff > 0:
+                # cheap is B
+                amount_coins = start_USDT_amount / price_B
+                profit = (amount_coins * price_A_base) - start_USDT_amount
+            elif diff < 0:
+                # cheap is A
+                amount_coins = start_USDT_amount / price_A_base
+                profit = (amount_coins * price_B) - start_USDT_amount
+            else:
+                amount_coins = 0
+                profit = 0
+
+            # check if enough volume on stocks
+            if not check_volume(amount_coins):
+                profit = 0
+            return profit
+
+        pairs = list(p_data.keys())
+        p_data_profit = {}
+        pair_non_zero_profits = []
+        for pair in pairs:
+            p_data_profit[pair] = p_data[pair].apply(for_one_moment, axis=1)
+            score = p_data_profit[pair].astype(bool).sum()
+            pair_non_zero_profits.append((pair, score))
+        pair_non_zero_profits.sort(key=lambda x: x[1], reverse=True)
+
+        # sort by total profit
+        p_data_profit_out = {}
+        for pair, _ in pair_non_zero_profits:
+            p_data_profit_out[pair] = p_data_profit[pair]
+
+        return p_data_profit_out, pair_non_zero_profits
+
     logger = mp_logging.LoggerWorker().getLogger(__name__)
     sn1_sn2_weighted = []
     for i, (sn1, sn2) in enumerate(stock_combs):

@@ -1,0 +1,10 @@
+black==25.1.0
+ccxt==4.4.57
+json5==0.9.25
+matplotlib==3.9.2
+numba==0.61.0
+numpy==2.1.1
+pandas==2.2.2
+pypdf==5.3.1
+scipy==1.15.2
+statsmodels==0.14.4
