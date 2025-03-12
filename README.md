@@ -24,6 +24,7 @@ Each plot contains:
 - Profit from arbitrage based on 100 USDT trade each time. Fees are not included. Volume is taken into account
 - Volumes from two stocks
 
+![UI](res/stock_stock_arbitrage.png)
 
 arbitrage_triangular.py
 =======================
