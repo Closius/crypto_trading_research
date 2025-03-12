@@ -20,10 +20,9 @@ from pypdf import PdfWriter
 import mp_logging
 
 
-def visualize_line_by_line(data_dict, file_name, data_dict_helped, dir_results_name):
+def visualize_line_by_line(data_dict, file_name, dir_results_name):
     """
-    data_dict: {pair: df}  - pairs data to show. for example diffs. Columns "{stock_name}_CLOSE", optional: "{stock_name}_VOLUME"
-    data_dict_helped: {pair: df}  - pairs data to help, raw prices and volume. Columns "{stock_name}_CLOSE", "{stock_name}_VOLUME"
+    data_dict: {pair: df}  - pairs data to show
     """
     logger = mp_logging.LoggerWorker().getLogger(__name__)
 
@@ -34,101 +33,109 @@ def visualize_line_by_line(data_dict, file_name, data_dict_helped, dir_results_n
     files = []
     for i, pair in enumerate(pairs_all):
 
-        # (rows, columns)
-        layout = [4, 1]
+        columns_plot = {
+            "price": [x for x in data_dict[pair].columns.tolist() if "_CLOSE" in x],
+            "diff": [x for x in data_dict[pair].columns.tolist() if "_DIFF" in x],
+            "profit": [x for x in data_dict[pair].columns.tolist() if "_PROFIT" in x],
+            "volume": [x for x in data_dict[pair].columns.tolist() if "_VOLUME" in x],
+        }
 
-        fig, axes = plt.subplots(nrows=layout[0], ncols=layout[1], sharex=True)
+        n_z = sum([bool(columns_plot[x]) for x in columns_plot.keys()])
+        # (rows, columns)
+        layout = [n_z, 1]
+        fig, _axes = plt.subplots(nrows=layout[0], ncols=layout[1], sharex=True)
         fig.set_size_inches(w=2000 / 100, h=layout[0] * 350 / 100)
         fig.subplots_adjust(hspace=0)
-        if isinstance(axes, np.ndarray):
-            axe = axes.ravel()
+        if isinstance(_axes, np.ndarray):
+            axe = _axes.ravel()
         else:
-            axe = [axes]
-
-        ax_price = axe[0]
-        ax_price_diff = axe[1]
-        ax_price_profit = axe[2]
-        ax_volume = axe[3]
+            axe = [_axes]
+        axes = {}
+        j = 0
+        for x in columns_plot.keys():
+            if columns_plot[x]:
+                axes[x] = axe[j]
+                j += 1
 
         # plot PRICES ==============================================================================================
-        ax_price.set_xticklabels([])
-        ax_price.tick_params(left=False, bottom=False)
+        if columns_plot["price"]:
+            axes["price"].set_xticklabels([])
+            axes["price"].tick_params(left=False, bottom=False)
 
-        ax_price.set_xticks(np.arange(0, data_dict[pair].size, xticks_num))
-        ax_price.set_title(pair)
+            axes["price"].set_xticks(np.arange(0, data_dict[pair].size, xticks_num))
+            axes["price"].set_title(pair + " prices")
 
-        price_cols = [x for x in data_dict[pair].columns.tolist() if "_CLOSE" in x]
-        try:
-            data_dict_helped[pair].plot(y=price_cols, kind="line", ax=ax_price, grid=True)
-        except Exception as err:
-            logger.error(
-                f"plot PRICES {pair}: data_dict[pair].columns: "
-                f"{data_dict[pair].columns.tolist()}, data_dict_helped[pair].columns: "
-                f"{data_dict_helped[pair].columns.tolist()} error: {str(err)}"
-            )
+            try:
+                data_dict[pair].plot(y=columns_plot["price"], kind="line", ax=axes["price"], grid=True)
+            except Exception as err:
+                logger.error(
+                    f"plot PRICES {pair}: data_dict[pair].columns: "
+                    f"{data_dict[pair].columns.tolist()}, data_dict_price_volume[pair].columns: "
+                    f"error: {str(err)}"
+                )
 
         # plot PRICES diff =========================================================================================
-        ax_price_diff.set_xticklabels([])
-        ax_price_diff.tick_params(left=False, bottom=False)
+        if columns_plot["diff"]:
+            axes["diff"].set_xticklabels([])
+            axes["diff"].tick_params(left=False, bottom=False)
 
-        ax_price_diff.set_xticks(np.arange(0, data_dict[pair].size, xticks_num))
-        ax_price_diff.set_title(pair + " % diff")
-        ax_price_diff.axhline(0, color="black", linewidth=2)
+            axes["diff"].set_xticks(np.arange(0, data_dict[pair].size, xticks_num))
+            axes["diff"].set_title(pair + " % diff")
+            axes["diff"].axhline(0, color="black", linewidth=2)
 
-        price_cols_diff = [x for x in data_dict[pair].columns.tolist() if "_CLOSE" in x]
-        try:
-            data_dict[pair].plot(y=price_cols_diff, kind="line", ax=ax_price_diff, grid=True)
-        except Exception as err:
-            logger.error(
-                f"plot PRICES diff {pair}: no numeric data to plot data_dict[pair].columns: "
-                f"{data_dict[pair].columns.tolist()}, data_dict_helped[pair].columns: "
-                f"{data_dict_helped[pair].columns.tolist()} error: {str(err)}"
-            )
+            try:
+                data_dict[pair].plot(y=columns_plot["diff"], kind="line", ax=axes["diff"], grid=True)
+            except Exception as err:
+                logger.error(
+                    f"plot PRICES diff {pair}: no numeric data to plot data_dict[pair].columns: "
+                    f"{data_dict[pair].columns.tolist()}, data_dict_price_volume[pair].columns: "
+                    f"error: {str(err)}"
+                )
 
         # plot PROFIT ==============================================================================================
-        ax_price_profit.set_xticklabels([])
-        ax_price_profit.tick_params(left=False, bottom=False)
+        if columns_plot["profit"]:
+            axes["profit"].set_xticklabels([])
+            axes["profit"].tick_params(left=False, bottom=False)
 
-        ax_price_profit.set_xticks(np.arange(0, data_dict[pair].size, xticks_num))
-        ax_price_profit.set_title(pair + " profit. independent arbitrage trade 100 USDT each time. no fees included")
-        ax_price_profit.axhline(0, color="black", linewidth=2)
+            axes["profit"].set_xticks(np.arange(0, data_dict[pair].size, xticks_num))
+            axes["profit"].set_title(pair + " profit. independent arbitrage trade 100 USDT each time. no fees included")
+            axes["profit"].axhline(0, color="black", linewidth=2)
 
-        price_cols_prof = [x for x in data_dict[pair].columns.tolist() if "_PROFIT" in x]
-        try:
-            data_dict[pair].plot(y=price_cols_prof, kind="line", ax=ax_price_profit, grid=True)
-        except Exception as err:
-            logger.error(
-                f"plot PROFIT {pair}: no numeric data to plot data_dict[pair].columns: "
-                f"{data_dict[pair].columns.tolist()}, data_dict_helped[pair].columns: "
-                f"{data_dict_helped[pair].columns.tolist()} error: {str(err)}"
-            )
+            try:
+                data_dict[pair].plot(y=columns_plot["profit"], kind="line", ax=axes["profit"], grid=True)
+            except Exception as err:
+                logger.error(
+                    f"plot PROFIT {pair}: no numeric data to plot data_dict[pair].columns: "
+                    f"{data_dict[pair].columns.tolist()}, data_dict_price_volume[pair].columns: "
+                    f"error: {str(err)}"
+                )
 
         # plot VOLUMES ============================================================================================
-        ax_volume.set_xticklabels([])
-        ax_volume.tick_params(left=False, bottom=False)
+        if columns_plot["volume"]:
+            axes["volume"].set_xticklabels(np.arange(0, data_dict[pair].size, xticks_num))
+            axes["volume"].tick_params(left=False, bottom=True)
 
-        ax_volume.set_yscale("log")
+            axes["volume"].set_yscale("log")
 
-        ax_volume.set_xticks(np.arange(0, data_dict_helped[pair].size, xticks_num))
-        ax_volume.set_title(pair + " VOLUMES")
+            axes["volume"].set_xticks(np.arange(0, data_dict[pair].size, xticks_num))
+            axes["volume"].set_title(pair + " volumes")
 
-        price_vols = [x for x in data_dict[pair].columns.tolist() if "_VOLUME" in x]
-        try:
-            data_dict_helped[pair].plot(y=price_vols, kind="line", ax=ax_volume, grid=True, linewidth=3)
-        except Exception as err:
-            logger.error(
-                f"plot VOLUMES {pair}: no numeric data to plot data_dict[pair].columns: "
-                f"{data_dict[pair].columns.tolist()}, data_dict_helped[pair].columns: "
-                f"{data_dict_helped[pair].columns.tolist()} error: {str(err)}"
-            )
-        d = data_dict_helped[pair].index
-        for column in price_vols:
-            ax_volume.fill_between(
-                d,
-                data_dict_helped[pair][column],
-                alpha=0.2,
-                interpolate=True,
-            )
+            try:
+                data_dict[pair].plot(y=columns_plot["volume"], kind="line", ax=axes["volume"], grid=True, linewidth=3)
+            except Exception as err:
+                logger.error(
+                    f"plot VOLUMES {pair}: no numeric data to plot data_dict[pair].columns: "
+                    f"{data_dict[pair].columns.tolist()}, data_dict_price_volume[pair].columns: "
+                    f"error: {str(err)}"
+                )
+            d = data_dict[pair].index
+            for column in columns_plot["volume"]:
+                axes["volume"].fill_between(
+                    d,
+                    data_dict[pair][column],
+                    alpha=0.2,
+                    interpolate=True,
+                )
 
         # save ====================================================================================================
         fig.tight_layout()
@@ -300,21 +307,18 @@ def calc_best_stock_exchange_pairs(stock_combs, p_data, timeframe, limit, dir_re
         logger = mp_logging.LoggerWorker().getLogger(__name__)
         p_data_dif_percent = {}
         pairs = list(p_data.keys())
+        base_column = f"{base_A_stock}_CLOSE"
+        column = f"{stock_B}_CLOSE"
         for i, pair in enumerate(pairs):
             df_percent = pd.DataFrame()
-            base_column = f"{base_A_stock}_CLOSE"
-            for column in p_data[pair].columns.tolist():
-                if column.startswith(base_A_stock) or column.startswith(stock_B):
-                    try:
-                        if "VOLUME" not in column:
-                            df_percent[column] = (
-                                (p_data[pair][column] - p_data[pair][base_column]) / p_data[pair][column]
-                            ) * 100
-                        else:
-                            df_percent[column] = p_data[pair][column]
-                    except Exception as err:
-                        logger.error(f"calc_price_diff_percent: {base_A_stock}, {stock_B}, {pair}, err: {err}")
-                        continue
+            try:
+                df_percent[base_A_stock + "_DIFF"] = p_data[pair][base_column] - p_data[pair][base_column]
+                df_percent[stock_B + "_DIFF"] = (
+                    (p_data[pair][column] - p_data[pair][base_column]) / p_data[pair][column]
+                ) * 100
+            except Exception as err:
+                logger.error(f"calc_price_diff_percent: {base_A_stock}, {stock_B}, {pair}, err: {err}")
+                continue
 
             p_data_dif_percent[pair] = df_percent
         return p_data_dif_percent
@@ -393,8 +397,9 @@ def calc_best_stock_exchange_pairs(stock_combs, p_data, timeframe, limit, dir_re
         pp = []
         for pair, pair_non_zero_profit in pair_non_zero_profits:
             pp.append(pair_non_zero_profit)
-            p_data_for_plot[pair] = p_data_dif_percent[pair]
-            p_data_for_plot[pair][f"{sn1}_{sn2}_PROFIT"] = p_data_profit[pair]
+            df = pd.DataFrame()  # otherwise I have last anf first points connected.. idk why
+            df[f"{sn1}_{sn2}_PROFIT"] = p_data_profit[pair]
+            p_data_for_plot[pair] = pd.concat([p_data[pair], p_data_dif_percent[pair], df])
 
         # average non zero profit
         avg_profit = sum(pp) / len(pp)
@@ -408,10 +413,17 @@ def calc_best_stock_exchange_pairs(stock_combs, p_data, timeframe, limit, dir_re
     if plot:
         logger.info("")
         for rank, ((sn1, sn2), p_data_for_plot, avg_profit) in enumerate(stocks_ranked):
+
+            # drop columns not related to sn1, sn2
+            _pp = {}
+            for pair in p_data_for_plot.keys():
+                _pp[pair] = p_data_for_plot[pair].copy(deep=True)
+                cols = [x for x in _pp[pair].columns.tolist() if not x.startswith(sn1) and not x.startswith(sn2)]
+                _pp[pair] = _pp[pair].drop(cols, axis=1)
+
             logger.info(f"\t\tplotting for stocks {sn1} {sn2} ({rank+1} of {len(stock_combs)}) ...")
             visualize_line_by_line(
-                p_data_for_plot,
-                data_dict_helped=p_data,
+                _pp,
                 dir_results_name=dir_results_name,
                 file_name=f"00{rank+1}_arbitrage_{sn1}_{sn2}_{timeframe}_{limit}",
             )
@@ -463,6 +475,13 @@ def main():
         limit=limit,
         stop_event=stop_event,
         logging_queue=logging_queue,
+    )
+
+    logger.info(f"plotting raw pairs data ...")
+    visualize_line_by_line(
+        p_data,
+        dir_results_name=dir_results_name,
+        file_name=f"arbitrage_raw_{timeframe}_{limit}",
     )
 
     stocks_ranked = calc_best_stock_exchange_pairs(stock_combs, p_data, timeframe, limit, dir_results_name, plot=True)
