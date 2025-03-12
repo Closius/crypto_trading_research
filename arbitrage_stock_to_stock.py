@@ -433,11 +433,11 @@ def calc_best_stock_exchange_pairs(stock_combs, p_data, timeframe, limit, dir_re
 
 def main():
     logger_listener = mp_logging.LoggerListener()
-    logging_queue = logger_listener.start_listener_process(log_file_path="arbitrage_pair_wings.log")
+    logging_queue = logger_listener.start_listener_process(log_file_path="arbitrage_stock_to_stock.log")
     logger = mp_logging.LoggerWorker().getLogger(__name__)
     logger.info("start")
 
-    dir_results_name = "arb_pair_wings_results"
+    dir_results_name = "arb_stock_to_stock_results"
     if not os.path.exists(dir_results_name):
         os.mkdir(dir_results_name)
     else:
