@@ -14,17 +14,23 @@ import time
 import json5
 import multiprocessing as mp
 from multiprocessing.sharedctypes import Array
+import concurrent.futures
 
 from pypdf import PdfWriter
 
 import mp_logging
 
 
-def visualize_line_by_line(data_dict, file_name, dir_results_name):
+def visualize_line_by_line(data_dict, file_name, dir_results_name, label=None, logging_queue=None):
     """
     data_dict: {pair: df}  - pairs data to show
     """
+    if logging_queue:
+        mp_logging.LoggerWorker().logger_worker_configure(logging_queue)
     logger = mp_logging.LoggerWorker().getLogger(__name__)
+
+    if label:
+        logger.info(label + " START")
 
     pairs_all = list(data_dict.keys())
 
@@ -156,6 +162,9 @@ def visualize_line_by_line(data_dict, file_name, dir_results_name):
             os.remove(file)
     elif len(files) == 1:
         os.rename(files[0], os.path.join(dir_results_name, f"{file_name}.pdf"))
+
+    if label:
+        logger.info(label + " END")
 
 
 def in_process_get_ohlcv(
@@ -293,7 +302,9 @@ def get_pairs_list(stock_names):
     return pairs_USDT_everywhere
 
 
-def calc_best_stock_exchange_pairs(stock_combs, p_data, timeframe, limit, dir_results_name, plot=True):
+def calc_best_stock_exchange_pairs(
+    stock_combs, p_data, timeframe, limit, dir_results_name, plot=True, logging_queue=None
+):
     """
     Calculate (and plot) the best stock exchange pairs to use for arbitrage
     Plot charts for all pairs of `p_data`:
@@ -396,6 +407,8 @@ def calc_best_stock_exchange_pairs(stock_combs, p_data, timeframe, limit, dir_re
         p_data_for_plot = {}
         pp = []
         for pair, pair_non_zero_profit in pair_non_zero_profits:
+            if (pair not in p_data_dif_percent) or (pair not in p_data_profit) or (pair not in p_data):
+                continue
             pp.append(pair_non_zero_profit)
             df = pd.DataFrame()  # otherwise I have last anf first points connected.. idk why
             df[f"{sn1}_{sn2}_PROFIT"] = p_data_profit[pair]
@@ -412,28 +425,34 @@ def calc_best_stock_exchange_pairs(stock_combs, p_data, timeframe, limit, dir_re
 
     if plot:
         logger.info("")
-        for rank, ((sn1, sn2), p_data_for_plot, avg_profit) in enumerate(stocks_ranked):
+        with concurrent.futures.ProcessPoolExecutor(max_workers=os.cpu_count()) as executor:
+            for rank, ((sn1, sn2), p_data_for_plot, avg_profit) in enumerate(stocks_ranked):
 
-            # drop columns not related to sn1, sn2
-            _pp = {}
-            for pair in p_data_for_plot.keys():
-                _pp[pair] = p_data_for_plot[pair].copy(deep=True)
-                cols = [x for x in _pp[pair].columns.tolist() if not x.startswith(sn1) and not x.startswith(sn2)]
-                _pp[pair] = _pp[pair].drop(cols, axis=1)
+                # drop columns not related to sn1, sn2
+                _pp = {}
+                for pair in p_data_for_plot.keys():
+                    _pp[pair] = p_data_for_plot[pair].copy(deep=True)
+                    cols = [x for x in _pp[pair].columns.tolist() if not x.startswith(sn1) and not x.startswith(sn2)]
+                    _pp[pair] = _pp[pair].drop(cols, axis=1)
 
-            logger.info(f"\t\tplotting for stocks {sn1} {sn2} ({rank+1} of {len(stock_combs)}) ...")
-            visualize_line_by_line(
-                _pp,
-                dir_results_name=dir_results_name,
-                file_name=f"00{rank+1}_arbitrage_{sn1}_{sn2}_{timeframe}_{limit}",
-            )
+                future = executor.submit(
+                    visualize_line_by_line,
+                    **{
+                        "data_dict": _pp,
+                        "dir_results_name": dir_results_name,
+                        "file_name": f"00{rank+1}_arbitrage_{sn1}_{sn2}_{timeframe}_{limit}",
+                        "label": f"\t\tplotting for stocks {sn1} {sn2} ({rank+1} of {len(stock_combs)})",
+                        "logging_queue": logging_queue,
+                    },
+                )
 
     return stocks_ranked
 
 
 def main():
     logger_listener = mp_logging.LoggerListener()
-    logging_queue = logger_listener.start_listener_process(log_file_path="arbitrage_stock_to_stock.log")
+    logging_queue = mp.Manager().Queue()
+    logger_listener.start_listener_process(queue=logging_queue, log_file_path="arbitrage_stock_to_stock.log")
     logger = mp_logging.LoggerWorker().getLogger(__name__)
     logger.info("start")
 
@@ -449,7 +468,7 @@ def main():
     timeframe = "1m"
     limit = 60
 
-    stock_names = {"binance", "bybit", "htx", "mexc", "kucoin"}  # "okx"
+    stock_names = {"binance", "bybit", "htx", "mexc", "kucoin", "okx"}
 
     stock_combs = list(itertools.combinations(stock_names, 2))
 
@@ -477,6 +496,8 @@ def main():
         logging_queue=logging_queue,
     )
 
+    stop_event.set()
+
     logger.info(f"plotting raw pairs data ...")
     visualize_line_by_line(
         p_data,
@@ -484,7 +505,9 @@ def main():
         file_name=f"arbitrage_raw_{timeframe}_{limit}",
     )
 
-    stocks_ranked = calc_best_stock_exchange_pairs(stock_combs, p_data, timeframe, limit, dir_results_name, plot=True)
+    stocks_ranked = calc_best_stock_exchange_pairs(
+        stock_combs, p_data, timeframe, limit, dir_results_name, plot=True, logging_queue=logging_queue
+    )
 
     stop_event.set()
     logger_listener.stop_listener_process()

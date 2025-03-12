@@ -45,6 +45,7 @@ because it checks if the logger was initialised in this process and raise and ex
 
 
 """
+
 import copy
 import logging
 import logging.handlers
@@ -54,10 +55,11 @@ import tempfile
 import typing
 from typing import Optional, Dict, Any
 
-LOG_SEVERITY_LEVEL="INFO" # "DEBUG"
+LOG_SEVERITY_LEVEL = "INFO"  # "DEBUG"
 
 # capture all warnings emitted by "import warnings" module
 logging.captureWarnings(True)
+
 
 class Singleton(type):
     """
@@ -98,9 +100,7 @@ class LoggerWorker(metaclass=Singleton):
                 # for default compatibility on Lx and Windows
                 # https://docs.python.org/3.10/library/multiprocessing.html#contexts-and-start-methods
                 if self.proc_self_id and (self.proc_self_id == id(self)):
-                    msg = (
-                        "Logger already configured in another process which forked to create an another process:\n"
-                    )
+                    msg = "Logger already configured in another process which forked to create an another process:\n"
                     msg += "(it is Ok for Linux with default process start method)\n\n"
                     msg += "Current stack:\n"
                     msg += f"\n{stack_info[3]}\n\n"
@@ -219,18 +219,21 @@ class LoggerListener(metaclass=Singleton):
                 print("Whoops! Logger problem:", file=sys.stderr)
                 traceback.print_exc(file=sys.stderr)
 
-    def start_listener_process(self, log_file_path: Optional[str] = None, add_stream_handler: bool = True):
+    def start_listener_process(self, queue=None, log_file_path: Optional[str] = None, add_stream_handler: bool = True):
         """
         No need to configure logging worker
         """
 
         if self.queue is not None:
             raise Exception("Only one listener can be started per process (and per program)")
-        self.queue = multiprocessing.Queue(-1)
+        if queue:
+            self.queue = queue
+        else:
+            self.queue = multiprocessing.Queue()
         _logger_ready_event = multiprocessing.Event()
         if log_file_path:
             self.log_file_path = log_file_path
-            is_default_logger_path = False # will left only 5 loggers if True
+            is_default_logger_path = False  # will left only 5 loggers if True
         else:
             self.log_file_path = tempfile.mkstemp(suffix=".log", text=True)[1]
             is_default_logger_path = False

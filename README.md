@@ -26,6 +26,7 @@ Each plot contains:
 - Volumes from two stocks
 
 ![UI](res/stock_stock_arbitrage.png)
+![UI](res/stock_stock_arbitrage_all.png)
 
 arbitrage_triangular.py
 =======================
