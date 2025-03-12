@@ -6,7 +6,8 @@ arbitrage_stock_to_stock.py
 Calculate the best stock exchange pairs to use for arbitrage.
 
 - Get all pairs that available on provided list of stock exchanges with USDT coin
-- Collect ohlcv from provided list of stock exchanges. Efficient: Stocks are living in separate processes
+- Collect ohlcv from provided list of stock exchanges. Collect data based on `timeframe` and `limit` (number of ohlcv) since the current date. 
+  Simultaneously from different stocks which are served in separate processes
 
 Calculate and plot for all pairs. Plots are organized by stock exchange pair - ranked from best to use to the worse.
 
