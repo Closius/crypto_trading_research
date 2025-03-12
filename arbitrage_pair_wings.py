@@ -9,6 +9,7 @@ import pandas as pd
 import numpy as np
 import itertools
 import math
+import shutil
 import time
 import json5
 import multiprocessing as mp
@@ -19,113 +20,135 @@ from pypdf import PdfWriter
 import mp_logging
 
 
-def visualize_line_by_line(data_dict, file_name, data_dict_helped=None, data_dict_volumes=None, highlite_zero_x=False):
+def visualize_line_by_line(data_dict, file_name, data_dict_helped, dir_results_name):
     """
-    data_dict: {pair: df}  - pairs data to show
-    data_dict_helped: {pair: df}  - pairs data to help
+    data_dict: {pair: df}  - pairs data to show. for example diffs. Columns "{stock_name}_CLOSE", optional: "{stock_name}_VOLUME"
+    data_dict_helped: {pair: df}  - pairs data to help, raw prices and volume. Columns "{stock_name}_CLOSE", "{stock_name}_VOLUME"
     """
+    logger = mp_logging.LoggerWorker().getLogger(__name__)
 
-    def batch(iterable, n=1):
-        l = len(iterable)
-        for ndx in range(0, l, n):
-            up = min(ndx + n, l)
-            yield ndx, up, iterable[ndx:up]
+    pairs_all = list(data_dict.keys())
 
-    pairs_all = sorted(list(data_dict.keys()))
+    xticks_num = 1
 
     files = []
-    for f, t, pairs_lim in batch(pairs_all, 1):
+    for i, pair in enumerate(pairs_all):
 
         # (rows, columns)
-        if data_dict_volumes:
-            layout = [len(pairs_lim) * 2, 1]
-        else:
-            layout = [len(pairs_lim), 1]
-        fig, axes = plt.subplots(nrows=layout[0], ncols=layout[1])  # , sharex=True)
-        fig.set_size_inches(w=1760 / 100, h=layout[0] * 640 / 100)
+        layout = [4, 1]
+
+        fig, axes = plt.subplots(nrows=layout[0], ncols=layout[1], sharex=True)
+        fig.set_size_inches(w=2000 / 100, h=layout[0] * 350 / 100)
         fig.subplots_adjust(hspace=0)
         if isinstance(axes, np.ndarray):
             axe = axes.ravel()
         else:
             axe = [axes]
 
-        i = 0
-        for pair in pairs_lim:
+        ax_price = axe[0]
+        ax_price_diff = axe[1]
+        ax_price_profit = axe[2]
+        ax_volume = axe[3]
 
-            if data_dict_volumes:
-                ax_price = axe[i]
-                ax_volume = axe[i + 1]
-                i += 2
-            else:
-                ax_price = axe[i]
-                ax_volume = None
-                i += 1
+        # plot PRICES ==============================================================================================
+        ax_price.set_xticklabels([])
+        ax_price.tick_params(left=False, bottom=False)
 
-            # plot prices
-            ax_price.set_xticklabels([])
-            ax_price.tick_params(left=False, bottom=False)
+        ax_price.set_xticks(np.arange(0, data_dict[pair].size, xticks_num))
+        ax_price.set_title(pair)
 
-            ax_price.set_xticks(np.arange(0, data_dict[pair].size, 5))
-            ax_price.set_title(pair)
-            if highlite_zero_x:
-                ax_price.axhline(0, color="black", linewidth=2)
+        price_cols = [x for x in data_dict[pair].columns.tolist() if "_CLOSE" in x]
+        try:
+            data_dict_helped[pair].plot(y=price_cols, kind="line", ax=ax_price, grid=True)
+        except Exception as err:
+            logger.error(
+                f"plot PRICES {pair}: data_dict[pair].columns: "
+                f"{data_dict[pair].columns.tolist()}, data_dict_helped[pair].columns: "
+                f"{data_dict_helped[pair].columns.tolist()} error: {str(err)}"
+            )
 
-            data_dict[pair].plot(kind="line", ax=ax_price, grid=True)
+        # plot PRICES diff =========================================================================================
+        ax_price_diff.set_xticklabels([])
+        ax_price_diff.tick_params(left=False, bottom=False)
 
-            # annotate with last price
-            if data_dict_helped:
-                for column in data_dict[pair].columns.tolist():
-                    y = np.nan
-                    y_text = np.nan
-                    j = 0
-                    while np.isnan(y) or np.isnan(y_text):
-                        j -= 1
-                        x = data_dict[pair].index[j]
-                        y = data_dict[pair][column].iloc[j]
-                        y_text = data_dict_helped[pair][column].iloc[j]
+        ax_price_diff.set_xticks(np.arange(0, data_dict[pair].size, xticks_num))
+        ax_price_diff.set_title(pair + " % diff")
+        ax_price_diff.axhline(0, color="black", linewidth=2)
 
-                    ax_price.annotate(y_text, (x, y))
+        price_cols_diff = [x for x in data_dict[pair].columns.tolist() if "_CLOSE" in x]
+        try:
+            data_dict[pair].plot(y=price_cols_diff, kind="line", ax=ax_price_diff, grid=True)
+        except Exception as err:
+            logger.error(
+                f"plot PRICES diff {pair}: no numeric data to plot data_dict[pair].columns: "
+                f"{data_dict[pair].columns.tolist()}, data_dict_helped[pair].columns: "
+                f"{data_dict_helped[pair].columns.tolist()} error: {str(err)}"
+            )
 
-            # plot volumes
-            if data_dict_volumes:
-                ax_volume.set_xticklabels([])
-                ax_volume.tick_params(left=False, bottom=False)
+        # plot PROFIT ==============================================================================================
+        ax_price_profit.set_xticklabels([])
+        ax_price_profit.tick_params(left=False, bottom=False)
 
-                ax_volume.set_yscale("log")
+        ax_price_profit.set_xticks(np.arange(0, data_dict[pair].size, xticks_num))
+        ax_price_profit.set_title(pair + " profit. independent arbitrage trade 100 USDT each time. no fees included")
+        ax_price_profit.axhline(0, color="black", linewidth=2)
 
-                ax_volume.set_xticks(np.arange(0, data_dict_volumes[pair].size, 5))
-                ax_volume.set_title(pair + " VOLUMES")
-                data_dict_volumes[pair].plot(kind="line", ax=ax_volume, grid=True)
+        price_cols_prof = [x for x in data_dict[pair].columns.tolist() if "_PROFIT" in x]
+        try:
+            data_dict[pair].plot(y=price_cols_prof, kind="line", ax=ax_price_profit, grid=True)
+        except Exception as err:
+            logger.error(
+                f"plot PROFIT {pair}: no numeric data to plot data_dict[pair].columns: "
+                f"{data_dict[pair].columns.tolist()}, data_dict_helped[pair].columns: "
+                f"{data_dict_helped[pair].columns.tolist()} error: {str(err)}"
+            )
 
-                d = data_dict_volumes[pair].index
-                for column in data_dict_volumes[pair].columns.tolist():
-                    ax_volume.fill_between(
-                        d,
-                        data_dict_volumes[pair][column],
-                        alpha=0.2,
-                        interpolate=True,
-                    )
+        # plot VOLUMES ============================================================================================
+        ax_volume.set_xticklabels([])
+        ax_volume.tick_params(left=False, bottom=False)
 
-        # plt.show()
+        ax_volume.set_yscale("log")
+
+        ax_volume.set_xticks(np.arange(0, data_dict_helped[pair].size, xticks_num))
+        ax_volume.set_title(pair + " VOLUMES")
+
+        price_vols = [x for x in data_dict[pair].columns.tolist() if "_VOLUME" in x]
+        try:
+            data_dict_helped[pair].plot(y=price_vols, kind="line", ax=ax_volume, grid=True, linewidth=3)
+        except Exception as err:
+            logger.error(
+                f"plot VOLUMES {pair}: no numeric data to plot data_dict[pair].columns: "
+                f"{data_dict[pair].columns.tolist()}, data_dict_helped[pair].columns: "
+                f"{data_dict_helped[pair].columns.tolist()} error: {str(err)}"
+            )
+        d = data_dict_helped[pair].index
+        for column in price_vols:
+            ax_volume.fill_between(
+                d,
+                data_dict_helped[pair][column],
+                alpha=0.2,
+                interpolate=True,
+            )
+
+        # save ====================================================================================================
         fig.tight_layout()
-        files.append(f"{file_name}_{f+1}_{t}.pdf")
+        files.append(os.path.join(dir_results_name, f"{file_name}_{i+1}_{len(pairs_all)}.pdf"))
         fig.savefig(files[-1], bbox_inches="tight")
+        plt.close(fig)
 
+    # combine all files into one
     if files and os.path.exists(f"{file_name}.pdf"):
         os.remove(f"{file_name}.pdf")
     if len(files) > 1:
         merger = PdfWriter()
-
         for pdf in files:
             merger.append(pdf)
-
-        merger.write(f"{file_name}.pdf")
+        merger.write(os.path.join(dir_results_name, f"{file_name}.pdf"))
         merger.close()
-
         for file in files:
             os.remove(file)
     elif len(files) == 1:
-        os.rename(files[0], f"{file_name}.pdf")
+        os.rename(files[0], os.path.join(dir_results_name, f"{file_name}.pdf"))
 
 
 def in_process_get_ohlcv(
@@ -160,8 +183,8 @@ def in_process_get_ohlcv(
                 since = ex.milliseconds() - (tf_milliseconds * data["limit"])
                 ohlcv = ex.fetch_ohlcv(data["pair"], data["timeframe"], since=since, limit=data["limit"])
 
-            except BadSymbol:
-                logger.error(f"bad symbol {data['pair']}")
+            except Exception as err:
+                logger.error(f"error on {stock_name}: {data['pair']}  error: {str(err)}")
                 ohlcv = []
             response.put((stock_name, ohlcv, time.time()))
             last_pair = request.value
@@ -198,12 +221,11 @@ def ohlcv(stock_names, pairs, timeframe, limit, stop_event, logging_queue):
     for stock_name in stock_names:
         is_ready_event_dict[stock_name].wait()
 
-    def get_ohlcv(pair) -> (pd.DataFrame, pd.DataFrame):
+    def get_ohlcv(pair) -> pd.DataFrame:
         d = json5.dumps({"pair": pair, "timeframe": timeframe, "limit": limit})
         request.value = bytes(d, "utf-8")
         stock_names_check = stock_names.copy()
         big_df = pd.DataFrame()
-        big_df_vol = pd.DataFrame()
         while stock_names_check:
             stock_name, ohlcv, t = response.get(block=True)
             if ohlcv:
@@ -214,142 +236,18 @@ def ohlcv(stock_names, pairs, timeframe, limit, stop_event, logging_queue):
 
                 # df.set_index("TIME")
                 big_df[stock_name + "_CLOSE"] = df["CLOSE"]
-                big_df_vol[stock_name + "_VOLUME"] = df["VOLUME"]
+                big_df[stock_name + "_VOLUME"] = df["VOLUME"]
             stock_names_check.remove(stock_name)
         big_df = big_df[sorted(big_df.columns.tolist())]
-        big_df_vol = big_df_vol[sorted(big_df_vol.columns.tolist())]
 
-        return big_df, big_df_vol
+        return big_df
 
     p_data = {}
-    p_data_vol = {}
     for i, pair in enumerate(pairs):
         logger.info(f"collecting {i+1} of {len(pairs)}: {pair}")
-        p_data[pair], p_data_vol[pair] = get_ohlcv(pair)
-
-    visualize_line_by_line(
-        p_data,
-        data_dict_volumes=p_data_vol,
-        data_dict_helped=p_data,
-        file_name=f"arbitrage_all_price_{timeframe}_{limit}",
-    )
-
-    p_data_dif_percent = {}
-    for i, pair in enumerate(pairs):
-        df_percent = pd.DataFrame()
-        base_column = "bybit_CLOSE"
-        for column in p_data[pair].columns.tolist():
-            if "VOLUME" not in column:
-                df_percent[column] = (
-                    (p_data[pair][base_column] - p_data[pair][column]) / p_data[pair][base_column]
-                ) * 100
-            else:
-                df_percent[column] = p_data[pair][column]
-
-        p_data_dif_percent[pair] = df_percent
-
-    visualize_line_by_line(
-        p_data_dif_percent,
-        data_dict_volumes=p_data_vol,
-        data_dict_helped=p_data,
-        file_name=f"arbitrage_all_diff_percent_{timeframe}_{limit}",
-        highlite_zero_x=True,
-    )
+        p_data[pair] = get_ohlcv(pair)
 
     return p_data
-
-
-def find_best_stocks_pair(stock_names, pairs, timeframe, limit, p_data):
-    """
-    Investigate which pair of stocks give better arbitrage
-    """
-
-    def number_of_intersections(price1: pd.Series, price2: pd.Series):
-        df_diff = price2 - price1
-
-        def number_of_netavive_to_positive_switches(df: np.array):
-            price_1 = df[0]
-            price_2 = df[-1]
-            if (price_1 < 0 and price_2 > 0) or (price_1 > 0 and price_2 < 0):
-                return 1
-            return 0
-
-        noi = int(df_diff.rolling(window=2).apply(number_of_netavive_to_positive_switches, raw=True).sum())
-
-        def less_0(df: np.array):
-            price_1 = df[0]
-            price_2 = df[-1]
-            if price_1 < 0 and price_2 < 0:
-                return 1
-            return 0
-
-        less_zero = int(df_diff.rolling(window=2).apply(less_0, raw=True).sum())
-
-        def more_0(df: np.array):
-            price_1 = df[0]
-            price_2 = df[-1]
-            if price_1 > 0 and price_2 > 0:
-                return 1
-            return 0
-
-        more_zero = int(df_diff.rolling(window=2).apply(more_0, raw=True).sum())
-
-        common_nonzero = df_diff.notna().sum()
-
-        dur_up = 2 - (common_nonzero / more_zero)
-        dur_down = 2 - (common_nonzero / less_zero)
-
-        dur_up = round(float(dur_up), 2)
-        dur_down = round(float(dur_down), 2)
-
-        score = round((abs(dur_up) + abs(dur_down)) / 2, 2)
-
-        return {
-            "noi": noi,
-            "score": score,
-            "common_nonzero": int(common_nonzero),
-            "more_zero": int(more_zero),
-            "less_zero": int(less_zero),
-        }
-
-    logger = mp_logging.LoggerWorker().getLogger(__name__)
-    rank_by_stocks = {}  # pair: {(stock_name_1, stock_name_2): rank}
-    for pair in pairs:
-        logger.info(pair)
-        rank_by_stocks[pair] = []
-        for sn1, sn2 in itertools.combinations(stock_names, 2):
-            # if p_data[pair][sn1 + "_CLOSE"].isnull().sum() != p_data[pair][sn2 + "_CLOSE"].isnull().sum():
-            #     continue
-            params = number_of_intersections(p_data[pair][sn1 + "_CLOSE"], p_data[pair][sn2 + "_CLOSE"])
-            rank_by_stocks[pair].append((sn1, sn2, params))
-        rank_by_stocks[pair].sort(key=lambda x: x[2]["score"], reverse=False)
-        for sns_noi in rank_by_stocks[pair]:
-            logger.info(f"\t{sns_noi}")
-
-    # show first pair
-    # pair = pairs[0]
-    for pair in pairs:
-        two_stocks_df_dif = {}
-        two_stocks_df = {}
-        for sn1, sn2, params in rank_by_stocks[pair]:
-            two_stocks_df_dif[sn2 + " - " + sn1 + " " + str(params)] = (
-                p_data[pair][sn2 + "_CLOSE"] - p_data[pair][sn1 + "_CLOSE"]
-            )
-            two_stocks_df[sn2 + " - " + sn1 + " " + str(params)] = (
-                (p_data[pair][sn2 + "_CLOSE"] - p_data[pair][sn1 + "_CLOSE"]) / p_data[pair][sn2 + "_CLOSE"]
-            ) * 100
-
-        visualize_line_by_line(
-            two_stocks_df_dif,
-            f"arbitrage_two_stocks_diff_{pair.replace('/','_')}_{timeframe}_{limit}",
-            highlite_zero_x=True,
-        )
-        visualize_line_by_line(
-            two_stocks_df,
-            f"arbitrage_two_stocks_diff_percent_{pair.replace('/','_')}_{timeframe}_{limit}",
-            highlite_zero_x=True,
-        )
-        # break
 
 
 def get_pairs_list(stock_names):
@@ -388,11 +286,144 @@ def get_pairs_list(stock_names):
     return pairs_USDT_everywhere
 
 
+def calc_price_diff_percent(p_data, base_A_stock, stock_B):
+    logger = mp_logging.LoggerWorker().getLogger(__name__)
+    p_data_dif_percent = {}
+    pairs = list(p_data.keys())
+    for i, pair in enumerate(pairs):
+        df_percent = pd.DataFrame()
+        base_column = f"{base_A_stock}_CLOSE"
+        for column in p_data[pair].columns.tolist():
+            if column.startswith(base_A_stock) or column.startswith(stock_B):
+                try:
+                    if "VOLUME" not in column:
+                        df_percent[column] = (
+                            (p_data[pair][column] - p_data[pair][base_column]) / p_data[pair][column]
+                        ) * 100
+                    else:
+                        df_percent[column] = p_data[pair][column]
+                except Exception as err:
+                    logger.error(f"calc_price_diff_percent: {base_A_stock}, {stock_B}, {pair}, err: {err}")
+                    continue
+
+        p_data_dif_percent[pair] = df_percent
+    return p_data_dif_percent
+
+
+def calc_arbitrage(stock_name_A_base, stock_name_B, p_data, start_USDT_amount):
+    def for_one_moment(df: pd.Series):
+        """
+        start_USDT_amount: amount for trading. EACH TRADE the same amount!
+
+        return: sorted by non zero profit
+        """
+
+        try:
+            price_A_base = df[f"{stock_name_A_base}_CLOSE"]
+            volume_A_base = df[f"{stock_name_A_base}_VOLUME"]
+            price_B = df[f"{stock_name_B}_CLOSE"]
+            volume_B = df[f"{stock_name_B}_VOLUME"]
+        except:
+            return 0
+
+        def check_volume(ac):
+            treshold = 10 * ac  # do arbitrage only if the volume is big enough on stocks
+            if treshold < volume_B and treshold < volume_A_base:
+                return True
+            else:
+                return False
+
+        diff = (price_A_base - price_B) / price_A_base
+        if diff > 0:
+            # cheap is B
+            amount_coins = start_USDT_amount / price_B
+            profit = (amount_coins * price_A_base) - start_USDT_amount
+        elif diff < 0:
+            # cheap is A
+            amount_coins = start_USDT_amount / price_A_base
+            profit = (amount_coins * price_B) - start_USDT_amount
+        else:
+            amount_coins = 0
+            profit = 0
+
+        # check if enough volume on stocks
+        if not check_volume(amount_coins):
+            profit = 0
+        return profit
+
+    pairs = list(p_data.keys())
+    p_data_profit = {}
+    pair_non_zero_profits = []
+    for pair in pairs:
+        p_data_profit[pair] = p_data[pair].apply(for_one_moment, axis=1)
+        score = p_data_profit[pair].astype(bool).sum()
+        pair_non_zero_profits.append((pair, score))
+    pair_non_zero_profits.sort(key=lambda x: x[1], reverse=True)
+
+    # sort by total profit
+    p_data_profit_out = {}
+    for pair, _ in pair_non_zero_profits:
+        p_data_profit_out[pair] = p_data_profit[pair]
+
+    return p_data_profit_out, pair_non_zero_profits
+
+
+def calc_best_stock_exchange_pairs(stock_combs, p_data, timeframe, limit, dir_results_name, plot=True):
+    logger = mp_logging.LoggerWorker().getLogger(__name__)
+    sn1_sn2_weighted = []
+    for i, (sn1, sn2) in enumerate(stock_combs):
+        logger.info(f"calculating for stocks {i+1} of {len(stock_combs)}: {sn1} {sn2}")
+        logger.info(f"\tcalc_price_diff_percent ...")
+        p_data_dif_percent = calc_price_diff_percent(p_data, base_A_stock=sn1, stock_B=sn2)
+
+        logger.info(f"\tcalc_arbitrage ...")
+        p_data_profit, pair_non_zero_profits = calc_arbitrage(
+            stock_name_A_base=sn1, stock_name_B=sn2, p_data=p_data, start_USDT_amount=100
+        )
+
+        # sorted by profit
+        p_data_for_plot = {}
+        pp = []
+        for pair, pair_non_zero_profit in pair_non_zero_profits:
+            pp.append(pair_non_zero_profit)
+            p_data_for_plot[pair] = p_data_dif_percent[pair]
+            p_data_for_plot[pair][f"{sn1}_{sn2}_PROFIT"] = p_data_profit[pair]
+
+        # average non zero profit
+        avg_profit = sum(pp) / len(pp)
+
+        sn1_sn2_weighted.append(((sn1, sn2), p_data_for_plot, avg_profit))
+    logger.info(f"Stocks pairs best to trade (from best to worse):")
+    stocks_ranked = sorted(sn1_sn2_weighted, key=lambda x: x[2], reverse=True)
+    for rank, ((sn1, sn2), p_data_for_plot, avg_profit) in enumerate(stocks_ranked):
+        logger.info(f"\t {rank+1}: {sn1} {sn2}")
+
+    if plot:
+        logger.info("")
+        for rank, ((sn1, sn2), p_data_for_plot, avg_profit) in enumerate(stocks_ranked):
+            logger.info(f"\t\tplotting for stocks {sn1} {sn2} ({rank+1} of {len(stock_combs)}) ...")
+            visualize_line_by_line(
+                p_data_for_plot,
+                data_dict_helped=p_data,
+                dir_results_name=dir_results_name,
+                file_name=f"00{rank+1}_arbitrage_{sn1}_{sn2}_{timeframe}_{limit}",
+            )
+
+    return stocks_ranked
+
+
 def main():
     logger_listener = mp_logging.LoggerListener()
     logging_queue = logger_listener.start_listener_process(log_file_path="arbitrage_pair_wings.log")
     logger = mp_logging.LoggerWorker().getLogger(__name__)
     logger.info("start")
+
+    dir_results_name = "arb_pair_wings_results"
+    if not os.path.exists(dir_results_name):
+        os.mkdir(dir_results_name)
+    else:
+        shutil.rmtree(dir_results_name)
+        os.mkdir(dir_results_name)
 
     stop_event = mp.Event()
 
@@ -401,15 +432,22 @@ def main():
 
     stock_names = {"binance", "bybit", "htx", "mexc", "kucoin"}  # "okx"
 
+    stock_combs = list(itertools.combinations(stock_names, 2))
+
+    logger.info(f"timeframe: {timeframe}")
+    logger.info(f"limit: {limit}")
+    logger.info(f"stock_names: {stock_names}")
+    logger.info(f"stock combinations: {len(stock_combs)} pairs")
+
     pairs = [
         "ETH/USDT",
         "BCH/USDT",
+        "AAVE/USDT",
     ]
 
     pairs = get_pairs_list(stock_names)
 
-    logger.info(f"found {len(pairs)} pairs")
-    logger.info(pairs)
+    logger.info(f"found {len(pairs)} crypto pairs: {pairs}")
 
     p_data = ohlcv(
         stock_names=stock_names,
@@ -420,7 +458,7 @@ def main():
         logging_queue=logging_queue,
     )
 
-    # find_best_stocks_pair(stock_names, pairs, timeframe, limit, p_data)
+    stocks_ranked = calc_best_stock_exchange_pairs(stock_combs, p_data, timeframe, limit, dir_results_name, plot=True)
 
     stop_event.set()
     logger_listener.stop_listener_process()
