@@ -11,13 +11,11 @@ import numpy as np
 import math
 import time
 import json5
-import threading
 
-import matplotlib as mpl
-
-mpl.rcParams["lines.linewidth"] = 1
 
 import mp_logging
+
+import sequence_calculator
 
 
 def visualize_line_by_line(data_dict, file_name):
@@ -48,8 +46,8 @@ def visualize_line_by_line(data_dict, file_name):
     plt.savefig(f"{file_name}.pdf")
 
 
-def get_pairs_no_USDT_spot():
-    exchange = ccxt.binance()
+def get_pairs_no_USDT_spot(stock_name):
+    exchange = getattr(ccxt, stock_name)()
     markets = exchange.fetch_markets()
 
     pairs_USDT = []
@@ -81,31 +79,19 @@ def get_pairs_no_USDT_spot():
 
 def main():
     logger_listener = mp_logging.LoggerListener()
-    logging_queue = logger_listener.start_listener_process(log_file_path="arbitrage_pairs.log")
+    logging_queue = logger_listener.start_listener_process(log_file_path="arbitrage_triangular.log")
     logger = mp_logging.LoggerWorker().getLogger(__name__)
     logger.info("start")
 
-    stop_event = threading.Event()
+    stock_name = "binance"
 
-    # exchange = ccxt.bybit()
-    # markets = exchange.fetch_markets()
-    # logger.info(json5.dumps(markets, indent=4))
+    logger.info(f"stock_name: {stock_name}")
+    pairs_USDT, pairs_no_USDT = get_pairs_no_USDT_spot(stock_name)
+    logger.info(f"pairs_USDT size: {len(pairs_USDT)}")
+    logger.info(f"pairs_no_USDT size: {len(pairs_no_USDT)}")
 
-    pairs_USDT, pairs_no_USDT = get_pairs_no_USDT_spot()
-    print("")
-    print("")
-    print("")
-    print("")
-    print("pairs_USDT")
-    print(pairs_USDT)
-    print("")
-    print("")
-    print("")
-    print("")
-    print("pairs_no_USDT")
-    print(pairs_no_USDT)
+    sequence_calculator.sequence_calculator(pairs_no_USDT, start_coin="BTC", end_coin="TRUMP", max_depth=2)
 
-    stop_event.set()
     logger_listener.stop_listener_process()
 
 
