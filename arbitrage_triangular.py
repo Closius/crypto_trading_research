@@ -90,7 +90,9 @@ def main():
     logger.info(f"pairs_USDT size: {len(pairs_USDT)}")
     logger.info(f"pairs_no_USDT size: {len(pairs_no_USDT)}")
 
-    sequence_calculator.sequence_calculator(pairs_no_USDT, start_coin="BTC", end_coin="TRUMP", max_depth=2)
+    sequences, uniq_pairs = sequence_calculator.sequence_calculator(
+        pairs_no_USDT, start_coin="BTC", end_coin="TRUMP", max_depth=2
+    )
 
     logger_listener.stop_listener_process()
 

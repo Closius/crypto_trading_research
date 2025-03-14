@@ -1,6 +1,12 @@
+"""
+Pair sequence generator.
+
+Generate all possible sequences between `start_coin` and `end_coin`
+from given list of pairs with given 'depth'
+"""
+
 from collections import defaultdict
 import mp_logging
-import concurrent.futures
 
 
 def generate_graph(pairs):
@@ -95,23 +101,25 @@ def sequence_calculator(pairs_raw, start_coin, end_coin, max_depth):
     logger.info(f"number of sequence before filtration by end_coin: {len(path_all)}")
     logger.info(f"filtration by end_coin ...")
 
-    path_all_fist = []
+    sequences = []
     uniq_pairs = set()
     for seq in path_all:
         if pairs_raw[seq[-1]] in end_pairs:
-            path_all_fist.append(seq)
+            sequences.append(seq)
             for s in seq:
                 uniq_pairs.add(pairs_raw[s])
 
     logger.info(f"======================================")
-    logger.info(f"found seqs: {len(path_all_fist)}")
+    logger.info(f"found seqs: {len(sequences)}")
     logger.info(f"uniq pairs: {len(uniq_pairs)}")
 
     logger.info(f"first 5:")
-    for i, p in enumerate(path_all_fist):
+    for i, p in enumerate(sequences):
         logger.info(f"\t{[pairs_raw[x] for x in p]}")
         if i == 5:
             break
+
+    return sequences, uniq_pairs
 
 
 if __name__ == "__main__":
@@ -2278,5 +2286,5 @@ if __name__ == "__main__":
         "RED/FDUSD",
         "RED/TRY",
     ]
-    sequence_calculator(pairs_all, start_coin="BTC", end_coin="TRUMP", max_depth=3)
+    sequence_calculator(pairs_all, start_coin="BTC", end_coin="TRUMP", max_depth=2)
     logger_listener.stop_listener_process()
