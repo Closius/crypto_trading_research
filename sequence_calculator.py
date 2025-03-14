@@ -3,6 +3,8 @@ Pair sequence generator.
 
 Generate all possible sequences between `start_coin` and `end_coin`
 from given list of pairs with given 'depth'
+
+Note: It is NP-hard problem
 """
 
 from collections import defaultdict
@@ -46,7 +48,6 @@ def generate_graph(pairs):
 
 
 def dfs_with_depth(graph, node, path=None, visited=None, all_paths=None, current_depth=0, max_depth=3):
-    # Initialize path, visited set, and all_paths list if not already initialized
     if path is None:
         path = []
     if visited is None:
@@ -54,16 +55,13 @@ def dfs_with_depth(graph, node, path=None, visited=None, all_paths=None, current
     if all_paths is None:
         all_paths = []
 
-    # Add the current node to the path and visited set
     path.append(node)
     visited.add(node)
 
-    # If the current depth exceeds max depth, stop exploring further
     if current_depth == max_depth:
         all_paths.append(path.copy())
         return all_paths
 
-    # Explore all unvisited neighbors recursively, increasing the depth
     for neighbor in graph[node]:
         if neighbor not in visited:
             dfs_with_depth(graph, neighbor, path.copy(), visited.copy(), all_paths, current_depth + 1, max_depth)
@@ -123,6 +121,7 @@ def sequence_calculator(pairs_raw, start_coin, end_coin, max_depth):
 
 
 if __name__ == "__main__":
+    # Test
     logger_listener = mp_logging.LoggerListener()
     logging_queue = logger_listener.start_listener_process(log_file_path="sequence_calculator.log")
     pairs_all = [
