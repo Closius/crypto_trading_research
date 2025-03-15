@@ -120,6 +120,50 @@ def sequence_calculator(pairs_raw, start_coin, end_coin, max_depth):
     return sequences, uniq_pairs
 
 
+def simple_USDT_PAIR_USDT_sequence(pairs_USDT, pairs_no_USDT, first_n=None):
+    """
+    pairs_USDT, pairs_no_USDT - unique pairs
+    """
+    logger = mp_logging.LoggerWorker().getLogger(__name__)
+    coins_with_USDT = []
+    for usdt in pairs_USDT:
+        p1, p2 = usdt.split("/")
+        if p2 == "USDT":
+            coins_with_USDT.append(p1)
+        else:
+            coins_with_USDT.append(p2)
+
+    sequences = []
+    unique_pairs = set()
+    for pair in pairs_no_USDT:
+        p1, p2 = pair.split("/")
+        if (p1 in coins_with_USDT) and (p2 in coins_with_USDT):
+            sequences.append((pairs_USDT[coins_with_USDT.index(p1)], pair, pairs_USDT[coins_with_USDT.index(p2)]))
+            unique_pairs = unique_pairs.union(set(sequences[-1]))
+
+    logger.info(f"======================================")
+    logger.info(f"found seqs: {len(sequences)}")
+    logger.info(f"uniq pairs: {len(unique_pairs)}")
+
+    logger.info(f"first 5:")
+    for i, p in enumerate(sequences):
+        logger.info(f"\t\t{p}")
+        if i == 5:
+            break
+
+    if first_n:
+        sequences = sequences[:first_n]
+        unique_pairs = set()
+        for s in sequences:
+            unique_pairs = unique_pairs.union(set(s))
+
+        logger.info(f"\tfirst_n: {first_n}")
+        logger.info(f"\tfound seqs: {len(sequences)}")
+        logger.info(f"\tuniq pairs: {len(unique_pairs)}")
+
+    return sequences, unique_pairs
+
+
 if __name__ == "__main__":
     # Test
     logger_listener = mp_logging.LoggerListener()

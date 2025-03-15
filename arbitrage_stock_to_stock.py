@@ -39,6 +39,8 @@ def visualize_line_by_line(data_dict, file_name, dir_results_name, label=None, l
     files = []
     for i, pair in enumerate(pairs_all):
 
+        x_tickss = np.arange(0, data_dict[pair].shape[0], xticks_num)
+
         columns_plot = {
             "price": [x for x in data_dict[pair].columns.tolist() if "_CLOSE" in x],
             "diff": [x for x in data_dict[pair].columns.tolist() if "_DIFF" in x],
@@ -68,7 +70,7 @@ def visualize_line_by_line(data_dict, file_name, dir_results_name, label=None, l
             axes["price"].set_xticklabels([])
             axes["price"].tick_params(left=False, bottom=False)
 
-            axes["price"].set_xticks(np.arange(0, data_dict[pair].size, xticks_num))
+            axes["price"].set_xticks(x_tickss)
             axes["price"].set_title(pair + " prices")
 
             try:
@@ -85,7 +87,7 @@ def visualize_line_by_line(data_dict, file_name, dir_results_name, label=None, l
             axes["diff"].set_xticklabels([])
             axes["diff"].tick_params(left=False, bottom=False)
 
-            axes["diff"].set_xticks(np.arange(0, data_dict[pair].size, xticks_num))
+            axes["diff"].set_xticks(x_tickss)
             axes["diff"].set_title(pair + " % diff")
             axes["diff"].axhline(0, color="black", linewidth=2)
 
@@ -103,7 +105,7 @@ def visualize_line_by_line(data_dict, file_name, dir_results_name, label=None, l
             axes["profit"].set_xticklabels([])
             axes["profit"].tick_params(left=False, bottom=False)
 
-            axes["profit"].set_xticks(np.arange(0, data_dict[pair].size, xticks_num))
+            axes["profit"].set_xticks(x_tickss)
             axes["profit"].set_title(pair + " profit. independent arbitrage trade 100 USDT each time. no fees included")
             axes["profit"].axhline(0, color="black", linewidth=2)
 
@@ -118,12 +120,12 @@ def visualize_line_by_line(data_dict, file_name, dir_results_name, label=None, l
 
         # plot VOLUMES ============================================================================================
         if columns_plot["volume"]:
-            axes["volume"].set_xticklabels(np.arange(0, data_dict[pair].size, xticks_num))
+            axes["volume"].set_xticklabels(x_tickss)
             axes["volume"].tick_params(left=False, bottom=True)
 
             axes["volume"].set_yscale("log")
 
-            axes["volume"].set_xticks(np.arange(0, data_dict[pair].size, xticks_num))
+            axes["volume"].set_xticks(x_tickss)
             axes["volume"].set_title(pair + " volumes")
 
             try:
@@ -412,7 +414,7 @@ def calc_best_stock_exchange_pairs(
             pp.append(pair_non_zero_profit)
             df = pd.DataFrame()  # otherwise I have last anf first points connected.. idk why
             df[f"{sn1}_{sn2}_PROFIT"] = p_data_profit[pair]
-            p_data_for_plot[pair] = pd.concat([p_data[pair], p_data_dif_percent[pair], df])
+            p_data_for_plot[pair] = pd.concat([p_data[pair], p_data_dif_percent[pair], df], axis=1)
 
         # average non zero profit
         avg_profit = sum(pp) / len(pp)
