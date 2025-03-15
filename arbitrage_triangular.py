@@ -1,6 +1,4 @@
 """
-under construction...
-
 arbitrage between pairs in one stock. triangular arbitrage
 """
 
@@ -9,24 +7,22 @@ import ccxt
 import matplotlib.pyplot as plt
 import pandas as pd
 import numpy as np
-import shutil
-import math
-import time
-import json5
-from pypdf import PdfWriter
 
 import mp_logging
+import utils
 
 import sequence_calculator
 
 
-def visualize_line_by_line(data_dict, file_name, dir_results_name, label=None, logging_queue=None):
+def visualize_line_by_line(data_dict, file_name, label=None, logging_queue=None):
     """
     data_dict: {sequence: df}  - seq data to show
     """
     if logging_queue:
         mp_logging.LoggerWorker().logger_worker_configure(logging_queue)
     logger = mp_logging.LoggerWorker().getLogger(__name__)
+
+    dir_results_name = os.path.dirname(file_name)
 
     if label:
         logger.info(label + " START")
@@ -74,7 +70,7 @@ def visualize_line_by_line(data_dict, file_name, dir_results_name, label=None, l
             axes["price_beg"].tick_params(left=False, bottom=False)
 
             axes["price_beg"].set_xticks(x_tickss)
-            axes["price_beg"].set_title(str(seq) + "          " + price_beg + " price begin")
+            axes["price_beg"].set_title(price_beg + " price begin")
 
             try:
                 data_dict[seq].plot(y=columns_plot["price_beg"], kind="line", ax=axes["price_beg"], grid=True)
@@ -172,23 +168,17 @@ def visualize_line_by_line(data_dict, file_name, dir_results_name, label=None, l
 
         # save ====================================================================================================
         fig.tight_layout()
-        files.append(os.path.join(dir_results_name, f"{file_name}_{i+1}_{len(pairs_all)}.pdf"))
+        files.append(os.path.join(dir_results_name, f"arb_tri_{i+1}_{len(pairs_all)}.pdf"))
         fig.savefig(files[-1], bbox_inches="tight")
         plt.close(fig)
 
     # combine all files into one
-    if files and os.path.exists(f"{file_name}.pdf"):
-        os.remove(f"{file_name}.pdf")
+    if files and os.path.exists(file_name):
+        os.remove(file_name)
     if len(files) > 1:
-        merger = PdfWriter()
-        for pdf in files:
-            merger.append(pdf)
-        merger.write(os.path.join(dir_results_name, f"{file_name}.pdf"))
-        merger.close()
-        for file in files:
-            os.remove(file)
+        utils.merge_pdfs(files, file_name)
     elif len(files) == 1:
-        os.rename(files[0], os.path.join(dir_results_name, f"{file_name}.pdf"))
+        os.rename(files[0], file_name)
 
     if label:
         logger.info(label + " END")
@@ -204,8 +194,8 @@ def get_pairs_no_USDT_spot(exchange):
             symbol = market["symbol"]
             if "/" not in symbol:
                 continue
-            if "USDC" in symbol:
-                continue
+            # if "USDC" in symbol:
+            #     continue
             if "USDT" in symbol:
                 pairs_USDT.append(symbol)
 
@@ -215,42 +205,99 @@ def get_pairs_no_USDT_spot(exchange):
             symbol = market["symbol"]
             if "/" not in symbol:
                 continue
-            if "USDC" in symbol:
-                continue
-            if "EUR" in symbol:
-                continue
+            # if "USDC" in symbol:
+            #     continue
+            # if "EUR" in symbol:
+            #     continue
             if "USDT" not in symbol:
                 pairs_no_USDT.append(symbol)
 
     return pairs_USDT, pairs_no_USDT
 
 
-def get_ohlcv(exchange, pair, timeframe, limit) -> pd.DataFrame | None:
+def download_pairs_data_sorted_by_non_zero_volume(exchange, pairs, timeframe, limit):
+    def get_ohlcv(exchange, pair, timeframe, limit) -> pd.DataFrame | None:
+        logger = mp_logging.LoggerWorker().getLogger(__name__)
+        if timeframe[-1] != "m":
+            raise ValueError('timeframe[-1] != "m"')
+        tf_milliseconds = int(timeframe[:-1]) * 60000
+        # since = exchange.milliseconds () - 86400000  # -1 day from now
+        since = exchange.milliseconds() - (tf_milliseconds * limit)
+        try:
+            ohlcv = exchange.fetch_ohlcv(pair, timeframe, since=since, limit=limit)
+        except Exception as err:
+            logger.error(f"error: {pair}  error: {str(err)}")
+            ohlcv = []
+
+        if ohlcv:
+            big_df = pd.DataFrame()
+            df = pd.DataFrame(ohlcv, columns=["TIME", "OPEN", "HIGH", "LOW", "CLOSE", "VOLUME"]).drop("TIME", axis=1)
+            # df["TIME"] = pd.to_datetime(df["TIME"], unit="ms")
+            # df.set_index("TIME")
+            big_df[pair + "_CLOSE"] = df["CLOSE"]
+            big_df[pair + "_VOLUME"] = df["VOLUME"]
+
+            return big_df
+
     logger = mp_logging.LoggerWorker().getLogger(__name__)
-    if timeframe[-1] != "m":
-        raise ValueError('timeframe[-1] != "m"')
-    tf_milliseconds = int(timeframe[:-1]) * 60000
-    # since = exchange.milliseconds () - 86400000  # -1 day from now
-    since = exchange.milliseconds() - (tf_milliseconds * limit)
-    try:
-        ohlcv = exchange.fetch_ohlcv(pair, timeframe, since=since, limit=limit)
-    except Exception as err:
-        logger.error(f"error: {pair}  error: {str(err)}")
-        ohlcv = []
 
-    if ohlcv:
-        big_df = pd.DataFrame()
-        df = pd.DataFrame(ohlcv, columns=["TIME", "OPEN", "HIGH", "LOW", "CLOSE", "VOLUME"]).drop("TIME", axis=1)
-        # df["TIME"] = pd.to_datetime(df["TIME"], unit="ms")
-        # df.set_index("TIME")
-        big_df[pair + "_CLOSE"] = df["CLOSE"]
-        big_df[pair + "_VOLUME"] = df["VOLUME"]
+    _p_data = {}
+    ranked_volume_pairs = []
+    for i, pair in enumerate(pairs):
+        logger.info(f"\tgetting pair data ({i+1} of {len(pairs)}) : {pair}")
+        _p_data[pair] = get_ohlcv(exchange, pair, timeframe, limit)
+        if _p_data[pair] is None:
+            logger.info("\t\t\tno data")
+            continue
+        score = _p_data[pair][pair + "_VOLUME"].astype(bool).sum()
+        ranked_volume_pairs.append((pair, score))
+    ranked_volume_pairs.sort(key=lambda x: x[1], reverse=True)
 
-        return big_df
+    logger.info("rank pairs by non zero volume: ")
+    p_data = {}
+    for pair, score in ranked_volume_pairs:
+        logger.info(f"\t\t{pair}: {score}")
+        p_data[pair] = _p_data[pair]
+
+    return p_data
+
+
+def build_sequences_dataframe_data(p_data, sequences):
+    logger = mp_logging.LoggerWorker().getLogger(__name__)
+
+    logger.info("rank sequences by non zero volume")
+    volume_ranked_sequences = []
+    for pair in p_data.keys():
+        for seq in sequences:
+            if pair == seq[1]:
+                volume_ranked_sequences.append(seq)
+
+    logger.info(f"generate seq data")
+    s_data = {}
+    labels = ["beg", "mid", "end"]
+    for n, seq in enumerate(volume_ranked_sequences):
+        dfs = []
+        for i, pair in enumerate(seq):
+            if p_data[pair] is None:
+                break
+            dfs.append(p_data[pair].copy(deep=True))
+            new_cols = {}
+            for c in dfs[-1].columns.tolist():
+                if c.endswith("VOLUME"):
+                    new_cols[c] = c.replace("VOLUME", labels[i] + "_VOLUME")
+                if c.endswith("CLOSE"):
+                    new_cols[c] = c.replace("CLOSE", labels[i] + "_CLOSE")
+            dfs[-1].rename(columns=new_cols, inplace=True)
+
+        if len(dfs) == 3:
+            s_data[seq] = pd.concat(dfs, axis=1)
+
+    return s_data
 
 
 def calc_arbitrage(s_data, init_invest):
     logger = mp_logging.LoggerWorker().getLogger(__name__)
+    logger.info(f"calculate arbitrage")
 
     def for_one_moment(df: pd.Series):
         """
@@ -418,47 +465,111 @@ def calc_arbitrage(s_data, init_invest):
             s_data_profit_out[seq] = pd.concat([s_data[seq], s_data_profit[seq]], axis=1)
 
     logger.info(f"Sequences best to trade (from best to worse) seq, score non zero profit trades:")
+    seqs_non_zero_profits_dropped_0 = []
     for rank, (seq, score) in enumerate(seqs_non_zero_profits):
-        logger.info(f"\t {rank+1}: {seq} {score}")
+        logger.info(f"\t {rank + 1}: {seq} {score}")
+        if score > 0:
+            seqs_non_zero_profits_dropped_0.append((seq, score))
 
-    logger.info(
-        """
-    legend for Profit graph:
+    return s_data_profit_out, seqs_non_zero_profits, seqs_non_zero_profits_dropped_0
+
+
+def build_report(
+    stock_name,
+    timeframe,
+    limit,
+    pairs_USDT,
+    pairs_no_USDT,
+    uniq_pairs,
+    sequences,
+    p_data,
+    s_data,
+    s_data_profit_out,
+    seqs_non_zero_profits_dropped_0,
+):
+    logger = mp_logging.LoggerWorker().getLogger(__name__)
+
+    dir_results_name = "arb_triangular_results"
+    if not os.path.exists(dir_results_name):
+        os.mkdir(dir_results_name)
+    # else:
+    #     shutil.rmtree(dir_results_name)
+    #     os.mkdir(dir_results_name)
+
+    file_viz = os.path.join(dir_results_name, f"_arbitrage_tri_{stock_name}_{timeframe}_{limit}.pdf")
+
+    logger.info(f"visualise seq data")
+    visualize_line_by_line(
+        s_data_profit_out,
+        file_name=file_viz,
+    )
+
+    text = f"""
+    \t\t\t***********************************
+    \t\t\t*  Triangular arbitrage research  *
+    \t\t\t***********************************
+    
+    Warning: No fees are included!
+    Warning: Due to the sequential pair data downloading - there might be a lag between different pairs.
+             Because the algorithm is using integer index instead of time
+
+    date: {utils.datetime_to_text(utils.datetime_now())}
+
+    stock name: {stock_name}
+    timeframe: {timeframe}
+    limit: {limit}
+
+    pairs on stock: USDT size: {len(pairs_USDT)}
+    pairs on stock: no USDT size: {len(pairs_no_USDT)}
+
+    total unique pairs using in sequences: {len(uniq_pairs)}    
+    total possible sequences: {len(sequences)}
+
+    Fetched data: now - timeframe * limit
+    =====================================
+
+    available data for pairs, size: {len([x for x in p_data.keys() if p_data[x] is not None])}
+    available (USDT - pair - USDT) sequences: {len(list(s_data.keys()))}
+
+    Sequences best to trade (from best to worse), score=number of non zero profit trades: ({len(seqs_non_zero_profits_dropped_0)})
+    {"\n\t".join([f"{int(x[1])}\t\t{'\t'.join(x[0])}" for x in seqs_non_zero_profits_dropped_0])}
+
+    Plot legend for "profit" graph:
         "bv" - buy_buy_sell - not enough volume
         "b" - buy_buy_sell - profit
-    
+
         "sv" - buy_sell_sell - not enough volume
         "s" - buy_sell_sell - profit
-    
+
         "n" - no profit by both buy_buy_sell and buy_sell_sell
-        
+
         "i" - wrong index
         "p" - wrong price
         "v" - wrong volume
+
     """
+
+    utils.create_pdf("first_page.pdf", text)
+
+    rep_file = os.path.join(dir_results_name, f"arbitrage_tri_{stock_name}_{timeframe}_{limit}.pdf")
+
+    utils.merge_pdfs(
+        ["first_page.pdf", file_viz],
+        rep_file,
     )
 
-    return s_data_profit_out, seqs_non_zero_profits
+    logger.info(f"report file: {rep_file}")
+
+    return rep_file
 
 
-def main():
+def main(stock_name, timeframe, limit):
     logger_listener = mp_logging.LoggerListener()
     logging_queue = logger_listener.start_listener_process(log_file_path="arbitrage_triangular.log")
     logger = mp_logging.LoggerWorker().getLogger(__name__)
     logger.info("start")
 
-    dir_results_name = "arb_triangular_results"
-    if not os.path.exists(dir_results_name):
-        os.mkdir(dir_results_name)
-    else:
-        shutil.rmtree(dir_results_name)
-        os.mkdir(dir_results_name)
-
-    stock_name = "binance"
     exchange = getattr(ccxt, stock_name)()
-
-    timeframe = "1m"
-    limit = 60
 
     logger.info(f"timeframe: {timeframe}")
     logger.info(f"limit: {limit}")
@@ -472,66 +583,32 @@ def main():
     #     pairs_no_USDT, start_coin="BTC", end_coin="TRUMP", max_depth=2
     # )
 
-    sequences, uniq_pairs = sequence_calculator.simple_USDT_PAIR_USDT_sequence(pairs_USDT, pairs_no_USDT, first_n=500)
+    sequences, uniq_pairs = sequence_calculator.simple_USDT_PAIR_USDT_sequence(
+        pairs_USDT, pairs_no_USDT
+    )  # , first_n=3)
 
-    # logger_listener.stop_listener_process()
-    # return
+    p_data = download_pairs_data_sorted_by_non_zero_volume(exchange, uniq_pairs, timeframe, limit)
 
-    p_data = {}
-    ranked_volume_pairs = []
-    for i, pair in enumerate(uniq_pairs):
-        logger.info(f"\tgetting pair data ({i+1} of {len(uniq_pairs)}) : {pair}")
-        p_data[pair] = get_ohlcv(exchange, pair, timeframe, limit)
-        if p_data[pair] is None:
-            logger.info("\t\t\tno data")
-            continue
-        score = p_data[pair][pair + "_VOLUME"].astype(bool).sum()
-        ranked_volume_pairs.append((pair, score))
-    ranked_volume_pairs.sort(key=lambda x: x[1], reverse=True)
+    s_data = build_sequences_dataframe_data(p_data, sequences)
 
-    logger.info("rank pairs by non zero volume: ")
-    volume_ranked_sequences = []
-    for pair, score in ranked_volume_pairs:
-        logger.info(f"\t\t{pair}: {score}")
-        for seq in sequences:
-            if pair == seq[1]:
-                volume_ranked_sequences.append(seq)
+    s_data_profit_out, seqs_non_zero_profits, seqs_non_zero_profits_dropped_0 = calc_arbitrage(s_data, init_invest=100)
 
-    logger.info(f"generate seq data")
-    s_data = {}
-    labels = ["beg", "mid", "end"]
-    for n, seq in enumerate(volume_ranked_sequences):
-        dfs = []
-        for i, pair in enumerate(seq):
-            if p_data[pair] is None:
-                break
-            dfs.append(p_data[pair].copy(deep=True))
-            new_cols = {}
-            for c in dfs[-1].columns.tolist():
-                if c.endswith("VOLUME"):
-                    new_cols[c] = c.replace("VOLUME", labels[i] + "_VOLUME")
-                if c.endswith("CLOSE"):
-                    new_cols[c] = c.replace("CLOSE", labels[i] + "_CLOSE")
-            dfs[-1].rename(columns=new_cols, inplace=True)
-
-        if len(dfs) == 3:
-            s_data[seq] = pd.concat(dfs, axis=1)
-
-    logger.info(f"calculate arbitrage")
-    s_data_profit_out, seqs_non_zero_profits = calc_arbitrage(s_data, init_invest=100)
-
-    # logger_listener.stop_listener_process()
-    # return
-
-    logger.info(f"visualise seq data")
-    visualize_line_by_line(
+    build_report(
+        stock_name,
+        timeframe,
+        limit,
+        pairs_USDT,
+        pairs_no_USDT,
+        uniq_pairs,
+        sequences,
+        p_data,
+        s_data,
         s_data_profit_out,
-        dir_results_name=dir_results_name,
-        file_name=f"arbitrage_tri_{timeframe}_{limit}",
+        seqs_non_zero_profits_dropped_0,
     )
 
     logger_listener.stop_listener_process()
 
 
 if __name__ == "__main__":
-    main()
+    main(stock_name="bybit", timeframe="1m", limit=60)

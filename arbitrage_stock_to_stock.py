@@ -16,9 +16,8 @@ import multiprocessing as mp
 from multiprocessing.sharedctypes import Array
 import concurrent.futures
 
-from pypdf import PdfWriter
-
 import mp_logging
+import utils
 
 
 def visualize_line_by_line(data_dict, file_name, dir_results_name, label=None, logging_queue=None):
@@ -155,13 +154,7 @@ def visualize_line_by_line(data_dict, file_name, dir_results_name, label=None, l
     if files and os.path.exists(f"{file_name}.pdf"):
         os.remove(f"{file_name}.pdf")
     if len(files) > 1:
-        merger = PdfWriter()
-        for pdf in files:
-            merger.append(pdf)
-        merger.write(os.path.join(dir_results_name, f"{file_name}.pdf"))
-        merger.close()
-        for file in files:
-            os.remove(file)
+        utils.merge_pdfs(files, os.path.join(dir_results_name, f"{file_name}.pdf"))
     elif len(files) == 1:
         os.rename(files[0], os.path.join(dir_results_name, f"{file_name}.pdf"))
 
@@ -239,11 +232,12 @@ def ohlcv(stock_names, pairs, timeframe, limit, stop_event, logging_queue):
     for stock_name in stock_names:
         is_ready_event_dict[stock_name].wait()
 
-    def get_ohlcv(pair) -> pd.DataFrame:
+    def get_ohlcv(pair):
         d = json5.dumps({"pair": pair, "timeframe": timeframe, "limit": limit})
         request.value = bytes(d, "utf-8")
         stock_names_check = stock_names.copy()
         big_df = pd.DataFrame()
+        _exist_for_stocks = []
         while stock_names_check:
             stock_name, ohlcv, t = response.get(block=True)
             if ohlcv:
@@ -255,15 +249,21 @@ def ohlcv(stock_names, pairs, timeframe, limit, stop_event, logging_queue):
                 # df.set_index("TIME")
                 big_df[stock_name + "_CLOSE"] = df["CLOSE"]
                 big_df[stock_name + "_VOLUME"] = df["VOLUME"]
+                _exist_for_stocks.append(stock_name)
             stock_names_check.remove(stock_name)
         big_df = big_df[sorted(big_df.columns.tolist())]
 
-        return big_df
+        return big_df, _exist_for_stocks
 
     p_data = {}
     for i, pair in enumerate(pairs):
         logger.info(f"collecting {i+1} of {len(pairs)}: {pair}")
-        p_data[pair] = get_ohlcv(pair)
+        data, exist_for_stocks = get_ohlcv(pair)
+        # TODO: this is not efficient
+        if len(exist_for_stocks) == len(stock_names):
+            p_data[pair] = data
+        else:
+            logger.info(f"no data for stocks: {set(stock_names).difference(set(exist_for_stocks))}")
 
     return p_data
 
@@ -304,16 +304,9 @@ def get_pairs_list(stock_names):
     return pairs_USDT_everywhere
 
 
-def calc_best_stock_exchange_pairs(
-    stock_combs, p_data, timeframe, limit, dir_results_name, plot=True, logging_queue=None
-):
+def calc_best_stock_exchange_pairs(stock_combs, p_data):
     """
-    Calculate (and plot) the best stock exchange pairs to use for arbitrage
-    Plot charts for all pairs of `p_data`:
-        - Prices from two stocks
-        - Prices difference in % (stock A - stock B)
-        - Profit from arbitrage based on 100 USDT trade each time. Fees are not included. Volume is taken into account
-        - Volumes from two stocks
+    Calculate the best stock exchange pairs to use for arbitrage
     """
 
     def calc_price_diff_percent(p_data, base_A_stock, stock_B):
@@ -420,13 +413,82 @@ def calc_best_stock_exchange_pairs(
         avg_profit = sum(pp) / len(pp)
 
         sn1_sn2_weighted.append(((sn1, sn2), p_data_for_plot, avg_profit))
-    logger.info(f"Stocks pairs best to trade (from best to worse):")
     stocks_ranked = sorted(sn1_sn2_weighted, key=lambda x: x[2], reverse=True)
+
+    return stocks_ranked
+
+
+def build_report(
+    stock_names, stock_combs, pairs, timeframe, limit, p_data, stocks_ranked, dir_results_name, logging_queue, plot
+):
+    logger = mp_logging.LoggerWorker().getLogger(__name__)
+
+    stocks_ranked_report = []
     for rank, ((sn1, sn2), p_data_for_plot, avg_profit) in enumerate(stocks_ranked):
+        stocks_ranked_report.append((sn1, sn2))
         logger.info(f"\t {rank+1}: {sn1} {sn2}")
 
+    text = f"""
+    \t\t\t***************************************
+    \t\t\t*  Arbitrage stock-to-stock research  *
+    \t\t\t***************************************
+
+    Warning: No fees are included!
+    Warning: Due to the sequential pair data downloading - there might be a lag between different pairs.
+             Because the algorithm is using integer index instead of time
+
+    date: {utils.datetime_to_text(utils.datetime_now())}
+
+    timeframe: {timeframe}
+    limit: {limit}
+
+    stock_names: 
+    {"\n\t".join(stock_names)}
+    
+    stock combinations: {len(stock_combs)}
+
+    crypto pairs that are used in all `stock_names`: {len(pairs)}
+
+    Fetched data: now - timeframe * limit
+    =====================================
+
+    available data for pairs in all `stock_names`: {len([x for x in p_data.keys()])}
+
+    stocks sorted by average non zero report (from best to worse):  
+    {"\n".join([f"\t{i + 1}: {x[0]}\t{x[1]}" for i, x in enumerate(stocks_ranked_report)])}
+    
+    Description:
+    ===========
+    
+    Calculate the best stock exchange pairs to use for arbitrage.
+    
+    - Get all pairs that available on provided list of stock exchanges with USDT coin
+    - Collect ohlcv from provided list of stock exchanges. Collect data based on `timeframe` and `limit` (number of ohlcv) since the current date. 
+      Simultaneously from different stocks which are served in separate processes
+    
+    Calculate and plot for all pairs. Plots are organized by stock exchange pair - ranked from best to use to the worse.
+    
+    Ranking: 
+    - For each stock exchange pair:
+      - For each trading pair calculate profit from arbitrage based on 100 USDT trade each time (each timeframe). 
+        Fees are not included. Volume is taken into account
+      - Sort trading pairs by sum of non zero profit dates (SNZP)
+    - Sort stock exchange pairs by sum(list of SNZP for each trading pair) / len(pairs)
+    
+    Each plot contains:
+    
+    - Prices from two stocks
+    - Prices difference in % (stock A - stock B)
+    - Profit from arbitrage based on 100 USDT trade each time. Fees are not included. Volume is taken into account
+    - Volumes from two stocks
+    """
+
+    utils.create_pdf(os.path.join(dir_results_name, "summary.pdf"), text)
+
+    logger.info(f"report dir: {dir_results_name}")
+
     if plot:
-        logger.info("")
+        logger.info("generating plots...")
         with concurrent.futures.ProcessPoolExecutor(max_workers=os.cpu_count()) as executor:
             for rank, ((sn1, sn2), p_data_for_plot, avg_profit) in enumerate(stocks_ranked):
 
@@ -448,7 +510,7 @@ def calc_best_stock_exchange_pairs(
                     },
                 )
 
-    return stocks_ranked
+    return dir_results_name
 
 
 def main():
@@ -507,8 +569,19 @@ def main():
         file_name=f"arbitrage_raw_{timeframe}_{limit}",
     )
 
-    stocks_ranked = calc_best_stock_exchange_pairs(
-        stock_combs, p_data, timeframe, limit, dir_results_name, plot=True, logging_queue=logging_queue
+    stocks_ranked = calc_best_stock_exchange_pairs(stock_combs, p_data)
+
+    build_report(
+        stock_names,
+        stock_combs,
+        pairs,
+        timeframe,
+        limit,
+        p_data,
+        stocks_ranked,
+        dir_results_name,
+        logging_queue,
+        plot=True,
     )
 
     stop_event.set()

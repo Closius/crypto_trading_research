@@ -218,6 +218,7 @@ class LoggerListener(metaclass=Singleton):
 
                 print("Whoops! Logger problem:", file=sys.stderr)
                 traceback.print_exc(file=sys.stderr)
+                break
 
     def start_listener_process(self, queue=None, log_file_path: Optional[str] = None, add_stream_handler: bool = True):
         """
@@ -274,9 +275,10 @@ class LoggerListener(metaclass=Singleton):
 
 
 if __name__ == "__main__":
-    logger_listener = LoggerListener()
-    logging_queue = logger_listener.start_listener_process()
-    LoggerWorker().logger_worker_configure(logging_queue)
-    logger = LoggerWorker().getLogger(__name__)
-    logger.info("foo bar")
-    logger_listener.stop_listener_process()
+    pass
+    # logger_listener = LoggerListener()
+    # logging_queue = logger_listener.start_listener_process()
+    # LoggerWorker().logger_worker_configure(logging_queue)
+    # logger = LoggerWorker().getLogger(__name__)
+    # logger.info("foo bar")
+    # logger_listener.stop_listener_process()
