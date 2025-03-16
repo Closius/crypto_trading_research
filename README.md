@@ -1,5 +1,8 @@
 # Crypto trading research
 
+Welcome to my research of different trading strategies/exploits. 
+All tests are based on historical data of OHLCV data which is fetched during the test with a help of `ccxt` library.
+
 arbitrage_stock_to_stock.py
 ===========================
 
