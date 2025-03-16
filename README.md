@@ -22,7 +22,7 @@ Each plot contains:
 
 - Prices from two stocks
 - Prices difference in % (stock A - stock B)
-- Profit from arbitrage based on 100 USDT trade each time. Fees are not included. Volume is taken into account
+- Profit is based on 100 USDT trade each time. Fees are not included. Volume is taken into account
 - Volumes from two stocks
 
 ![UI](res/stock_stock_arbitrage.png)
@@ -36,6 +36,8 @@ Triangulate arbitrage between trading pairs on the same stock.
 Plot sorted graphs with possible arbitrages on all combinations.
 
 For example SOL/USDT - SOL/BTC - BTC/USDT
+
+Profit is based on 100 USDT trade each time. Fees are not included. Volume is taken into account
 
 ![UI](res/triangular_arbitrage.png)
 

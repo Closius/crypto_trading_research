@@ -122,7 +122,7 @@ def visualize_line_by_line(data_dict, file_name, label=None, logging_queue=None)
             axes["profit"].tick_params(left=False, bottom=False)
 
             axes["profit"].set_xticks(x_tickss)
-            axes["profit"].set_title("profit")
+            axes["profit"].set_title("profit in USDT based on 100 USDT trade each time")
             axes["profit"].axhline(0, color="black", linewidth=2)
 
             try:
