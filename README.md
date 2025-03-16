@@ -33,9 +33,20 @@ arbitrage_triangular.py
 
 Triangulate arbitrage between trading pairs on the same stock. 
 
-For example BTC/USDT - ETH/BTC - ETH/USDT
+Plot sorted graphs with possible arbitrages on all combinations.
 
-Still in dev ...
+For example SOL/USDT - SOL/BTC - BTC/USDT
+
+![UI](res/triangular_arbitrage.png)
+
+arbitrage_pairs_correlations.py
+===============================
+
+Statistical arbitrage between pairs on the same stock. 
+
+Try to exploit some correlations between pairs
+
+Under dev ...
 
 test_stat_rand_walk.ipynb
 =========================
