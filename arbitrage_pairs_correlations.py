@@ -23,11 +23,16 @@ import shutil
 class PairsComb:
     pair1: str | None
     pair2: str | None
-    df: pd.DataFrame
     properties: dict
 
 
-def visualize_line_by_line(pair_combinations: typing.List[PairsComb], file_name, label=None, logging_queue=None):
+def visualize_line_by_line(
+    file_name: str,
+    p_data: typing.Dict[str, pd.DataFrame],
+    pair_combinations: typing.List[PairsComb] = None,
+    label=None,
+    logging_queue=None,
+):
     """
     pair_combinations: list of dict
     """
@@ -44,7 +49,13 @@ def visualize_line_by_line(pair_combinations: typing.List[PairsComb], file_name,
     for i, two_pairs in enumerate(pair_combinations):
         pair1 = two_pairs.pair1
         pair2 = two_pairs.pair2
-        df = two_pairs.df
+        df = pd.DataFrame()
+        if pair2:
+            df = pd.concat([df, p_data[pair1]], axis=1).drop("AVERAGE", axis=1)
+            df = pd.concat([df, p_data[pair2]], axis=1)
+        else:
+            df = p_data[pair1]
+            pair1 = None
 
         columns_plot = {
             "price_1": [x for x in df.columns.tolist() if pair1 + "_CLOSE" in x] if pair1 else [],
@@ -285,8 +296,8 @@ def build_report(
     timeframe,
     limit,
     pair_combinations: typing.List[PairsComb] | None,
-    all_on_one: typing.List[PairsComb] | None,
-    p_data,
+    all_on_one: typing.Dict[str, pd.DataFrame],
+    p_data: typing.Dict[str, pd.DataFrame],
 ):
     logger = mp_logging.LoggerWorker().getLogger(__name__)
 
@@ -300,28 +311,21 @@ def build_report(
     files = []
     files.append(os.path.join(dir_results_name, f"_arbitrage_corr_all_{stock_name}_{timeframe}_{limit}.pdf"))
 
+    pair_combinations_for_all_on_one = []
+    for name in all_on_one:
+        pair_combinations_for_all_on_one.append(
+            PairsComb(pair1=name, pair2=None, properties={"name": name, "size": all_on_one[name].shape[1]})
+        )
+
     logger.info(f"visualise all_on_one")
-    visualize_line_by_line(
-        all_on_one,
-        file_name=files[-1],
-    )
+    visualize_line_by_line(file_name=files[-1], p_data=all_on_one, pair_combinations=pair_combinations_for_all_on_one)
 
     if pair_combinations:
         files.append(os.path.join(dir_results_name, f"_arbitrage_corr_{stock_name}_{timeframe}_{limit}.pdf"))
 
         logger.info(f"visualise pair_combinations")
-        visualize_line_by_line(
-            pair_combinations,
-            file_name=files[-1],
-        )
-    if p_data:
-        files.append(os.path.join(dir_results_name, f"_arbitrage_corr_pdata_{stock_name}_{timeframe}_{limit}.pdf"))
+        visualize_line_by_line(file_name=files[-1], p_data=p_data, pair_combinations=pair_combinations)
 
-        logger.info(f"visualise p_data")
-        visualize_line_by_line(
-            all_on_one,
-            file_name=files[-1],
-        )
         #
         # logger.info("generating plots...")
         # with concurrent.futures.ProcessPoolExecutor(max_workers=os.cpu_count()) as executor:
@@ -420,7 +424,6 @@ def find_correlations_between_pairs(p_data: typing.Dict[str, pd.DataFrame]) -> t
             PairsComb(
                 pair1=pair1,
                 pair2=pair2,
-                df=pd.concat([p_data[pair1], p_data[pair2]], axis=1),
                 properties={
                     "pearson": p_data[pair1][pair1 + "_CLOSE"].corr(p_data[pair2][pair2 + "_CLOSE"]),
                     "kendall": p_data[pair1][pair1 + "_CLOSE"].corr(p_data[pair2][pair2 + "_CLOSE"], method="kendall"),
@@ -439,7 +442,7 @@ def find_correlations_between_pairs(p_data: typing.Dict[str, pd.DataFrame]) -> t
 
 
 def filter_by_threshold(
-    pair_combinations_corr: typing.List[PairsComb], threshold_up: float | None, threshold_down: float | None
+    pair_combinations_corr: typing.List[PairsComb], threshold_down: float | None, threshold_up: float = None
 ) -> typing.List[PairsComb]:
     logger = mp_logging.LoggerWorker().getLogger(__name__)
 
@@ -467,47 +470,33 @@ def normalize(sr: pd.Series):
     return (sr - sr.mean()) / sr.std()
 
 
-def calculate_normalized(pair_combinations: typing.List[PairsComb]):
+def calculate_normalized(p_data: typing.Dict[str, pd.DataFrame], pair_combinations: typing.List[PairsComb]):
     """
-    Calculate normalized df in pair_combinations
+    Calculate normalized df in p_data
 
     inplace
     """
+    _pr = set()
     for i, two_pairs in enumerate(pair_combinations):
-        pair_combinations[i].df[two_pairs.pair1 + "_NORM"] = normalize(
-            pair_combinations[i].df[two_pairs.pair1 + "_CLOSE"]
-        )
-        pair_combinations[i].df[two_pairs.pair2 + "_NORM"] = normalize(
-            pair_combinations[i].df[two_pairs.pair2 + "_CLOSE"]
-        )
+        for pair in [two_pairs.pair1, two_pairs.pair2]:
+            if pair not in _pr:
+                p_data[pair][pair + "_NORM"] = normalize(p_data[pair][pair + "_CLOSE"])
+                _pr.add(pair)
 
 
-def turn_into_all_in_one(pair_combinations: typing.List[PairsComb], pairs, label) -> typing.List[PairsComb]:
+def turn_into_all_in_one(p_data: typing.Dict[str, pd.DataFrame], pairs, label) -> pd.DataFrame:
     """
-    Combine `pair_combinations` in `all_on_one` filtered by `pairs`
+    Combine `p_data` in `all_on_one` filtered by `pairs`
 
     And calculate average from all pairs
     """
     logger = mp_logging.LoggerWorker().getLogger(__name__)
-    pairs_data = {}
-    for i, two_pairs in enumerate(pair_combinations):
-        for pair in [two_pairs.pair1, two_pairs.pair2]:
-            if pair not in pairs_data:
-                df = pd.DataFrame()
-                for col_name in two_pairs.df.columns.tolist():
-                    if pair in col_name:
-                        df = pd.concat([df, two_pairs.df[col_name]], axis=1)
-                pairs_data[pair] = df
 
-    all_on_one = PairsComb(
-        pair1=None, pair2=None, df=pd.DataFrame(), properties={"n_of_pairs": len(pairs), "name": label}
-    )
-    n_of_used_pairs = 0
+    all_on_one = pd.DataFrame()
     for pair in pairs:
-        if pair in pairs_data:
-            all_on_one.df[pair + "_NORM"] = pairs_data[pair][pair + "_NORM"]
-            n_of_used_pairs += 1
-    all_on_one.properties["n_of_pairs"] = n_of_used_pairs
+        if pair in p_data:
+            all_on_one[pair + "_NORM"] = p_data[pair][pair + "_NORM"]
+    n_of_used_pairs = all_on_one.shape[1]
     logger.info(f"number of USED pairs of {label}: {n_of_used_pairs} of {len(pairs)}")
 
     def weighted_average(df: pd.Series):
@@ -520,18 +509,15 @@ def turn_into_all_in_one(pair_combinations: typing.List[PairsComb], pairs, label
         )
 
     # weighted average
-    all_on_one.df["AVERAGE"] = all_on_one.df.apply(weighted_average, axis=1)
+    all_on_one["AVERAGE"] = all_on_one.apply(weighted_average, axis=1)
 
-    return [all_on_one]
+    return all_on_one
 
 
-def add_average(pair_combinations: typing.List[PairsComb], all_on_one=PairsComb):
-    for i, two_pairs in enumerate(pair_combinations):
-        pair_combinations[i].df["AVERAGE"] = all_on_one.df["AVERAGE"]
-        for pair in [two_pairs.pair1, two_pairs.pair2]:
-            pair_combinations[i].df[pair + "_DIFF_TO_AV"] = (
-                pair_combinations[i].df[pair + "_NORM"] - all_on_one.df["AVERAGE"]
-            )
+def add_average(p_data: typing.Dict[str, pd.DataFrame], all_on_one: pd.DataFrame):
+    for pair in p_data:
+        p_data[pair]["AVERAGE"] = all_on_one["AVERAGE"]
+        p_data[pair][pair + "_DIFF_TO_AV"] = p_data[pair][pair + "_NORM"] - all_on_one["AVERAGE"]
 
 
 def main(stock_name, timeframe, limit):
@@ -558,16 +544,19 @@ def main(stock_name, timeframe, limit):
     p_data = download_pairs_data_sorted_by_non_zero_volume(exchange, pairs, timeframe, limit)
 
     pair_combinations_corr = find_correlations_between_pairs(p_data)  # sorted by pearson
-    calculate_normalized(pair_combinations_corr)
+    calculate_normalized(p_data, pair_combinations_corr)
 
-    all_on_one = []
     # And calculate average from all pairs
-    all_on_one += turn_into_all_in_one(pair_combinations_corr, pairs_USDT, label="pairs_USDT")
-    # all_on_one += turn_into_all_in_one(pair_combinations_corr, pairs_no_USDT, label="pairs_no_USDT")
+    all_on_one = turn_into_all_in_one(p_data, pairs_USDT, label="pairs_USDT")
+    # all_on_one = turn_into_all_in_one(p_data, pairs_no_USDT, label="pairs_no_USDT")
 
-    pair_combinations_corr_filtered = filter_by_threshold(pair_combinations_corr, threshold_down=0.9, threshold_up=0.98)
+    pair_combinations_corr_filtered = filter_by_threshold(
+        pair_combinations_corr, threshold_down=0.97
+    )  # , threshold_up=0.98)
 
-    add_average(pair_combinations_corr_filtered, all_on_one=all_on_one[0])
+    add_average(p_data, all_on_one)
+
+    all_on_one = {"pairs_USDT": all_on_one}
 
     build_report(
         stock_name,
@@ -575,7 +564,7 @@ def main(stock_name, timeframe, limit):
         limit,
         pair_combinations=pair_combinations_corr_filtered,
         all_on_one=all_on_one,
-        p_data=None,
+        p_data=p_data,
     )
 
     logger_listener.stop_listener_process()

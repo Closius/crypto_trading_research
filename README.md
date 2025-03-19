@@ -53,6 +53,9 @@ Try to exploit some correlations between pairs
 
 Under dev ...
 
+![UI](res/pair_corr_all.png)
+![UI](res/pair_corr.png)
+
 test_stat_rand_walk.ipynb
 =========================
 
